@@ -1,0 +1,49 @@
+# Deployment: moltbook-redis
+# Extracted from OpenShift template
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: moltbook-redis
+  namespace: moltbook
+  labels:
+    app: moltbook
+    component: cache
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: moltbook
+      component: cache
+  template:
+    metadata:
+      labels:
+        app: moltbook
+        component: cache
+    spec:
+      containers:
+      - name: redis
+        image: registry.redhat.io/rhel9/redis-7:latest
+        ports:
+        - containerPort: 6379
+          protocol: TCP
+        command:
+        - redis-server
+        livenessProbe:
+          tcpSocket:
+            port: 6379
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests:
+            memory: 128Mi
+            cpu: 100m
+          limits:
+            memory: 256Mi
+            cpu: 200m

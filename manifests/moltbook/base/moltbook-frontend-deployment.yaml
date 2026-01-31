@@ -1,0 +1,61 @@
+# Deployment: moltbook-frontend
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: moltbook-frontend
+  namespace: moltbook
+  labels:
+    app: moltbook
+    component: frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: moltbook
+      component: frontend
+  template:
+    metadata:
+      labels:
+        app: moltbook
+        component: frontend
+    spec:
+      serviceAccountName: moltbook-oauth-proxy
+      containers:
+      - name: nginx
+        image: nginxinc/nginx-unprivileged:alpine
+        ports:
+        - containerPort: 8080
+          protocol: TCP
+        volumeMounts:
+        - name: config
+          mountPath: /etc/nginx/nginx.conf
+          subPath: nginx.conf
+        - name: html
+          mountPath: /usr/share/nginx/html/index.html
+          subPath: index.html
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests:
+            memory: 64Mi
+            cpu: 50m
+          limits:
+            memory: 128Mi
+            cpu: 100m
+      volumes:
+      - name: config
+        configMap:
+          name: moltbook-frontend-config
+      - name: html
+        configMap:
+          name: moltbook-frontend-config

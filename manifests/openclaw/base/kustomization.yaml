@@ -1,0 +1,16 @@
+# Kustomization for OpenClaw Gateway
+# Deploy with: oc apply -k .
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: openclaw
+resources:
+- openclaw-config-configmap.yaml
+- openclaw-deployment.yaml
+- openclaw-home-pvc-persistentvolumeclaim.yaml
+- openclaw-oauth-config-secret.yaml
+- openclaw-oauth-serviceaccount.yaml
+- openclaw-route.yaml
+- openclaw-secrets-secret.yaml
+- openclaw-service.yaml
+- openclaw-workspace-pvc-persistentvolumeclaim.yaml

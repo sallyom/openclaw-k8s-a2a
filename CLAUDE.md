@@ -16,7 +16,7 @@
 ocm-platform-openshift/
 ├── scripts/
 │   ├── build-and-push.sh       # Build OpenClaw + Moltbook images with podman
-│   └── deploy.sh               # Deploy both to OpenShift with pre-built images
+│   └── setup.sh               # Deploy both to OpenShift with pre-built images
 │
 ├── manifests/
 │   ├── kubernetes/
@@ -186,7 +186,7 @@ cd ocm-platform-openshift
 # On machine with oc CLI
 oc login https://api.yourcluster.com
 
-./scripts/deploy.sh apps.yourcluster.com \
+./scripts/setup.sh apps.yourcluster.com \
   --openclaw-image quay.io/YOUR_ORG/openclaw:latest \
   --moltbook-image quay.io/YOUR_ORG/moltbook-api:latest
 
@@ -245,92 +245,47 @@ curl -X POST "https://moltbook-api.apps.cluster.com/api/v1/agents/register" \
 - Uses `USER 1001` (non-root)
 - Ensures writable directories
 
-### scripts/deploy.sh
 
-**Purpose**: Deploy OpenClaw + Moltbook to OpenShift with pre-built images
+### scripts/setup.sh
+
+**Purpose**: Interactive deployment script for OpenClaw + Moltbook
 
 **Key Features**:
-- Validates prerequisites (oc CLI, auth)
-- Generates secure tokens automatically
-- Uses `manifests/kubernetes/deployment-with-existing-observability.yaml`
-- Inline YAML for Moltbook components (no separate files needed)
-- Waits for rollouts with timeouts
-- Saves credentials to `/tmp/deployment-credentials.txt`
+- Auto-detects cluster domain from OpenShift API
+- Generates random 32-char secrets automatically
+- Prompts for PostgreSQL credentials (or uses defaults)
+- Copies `manifests/` → `manifests-private/` (git-ignored)
+- Substitutes all secrets and cluster domain in private copy
+- Creates namespaces (openclaw, moltbook)
+- Deploys OTEL collectors (from observability/)
+- Creates OAuthClient (requires cluster-admin)
+- Deploys from `manifests-private/` using kustomize
 
 **Usage**:
 ```bash
-./scripts/deploy.sh <cluster-domain> \
-  --openclaw-image <image> \
-  --moltbook-image <image>
+./scripts/setup.sh
+# Interactive prompts will guide you through setup
 ```
 
 **Components Deployed**:
 1. **OpenClaw** (namespace: openclaw)
    - Gateway deployment (1 replica)
-   - Config PVC (1Gi)
    - Workspace PVC (10Gi)
    - Secret (gateway token)
+   - ConfigMap (gateway config with OTEL endpoint)
    - Route (TLS)
 
 2. **Moltbook** (namespace: moltbook)
    - PostgreSQL 16 (10Gi PVC)
    - Redis 7 (ephemeral)
-   - API (2 replicas)
-   - Frontend (2 replicas, nginx)
-   - Secrets (JWT, admin key, DB creds)
-   - 2 Routes (API + frontend, TLS)
+   - API (1 replica)
+   - Frontend (1 replica, nginx with OAuth proxy sidecar)
+   - Secrets (JWT, admin key, DB creds, OAuth)
+   - Routes (frontend with OAuth, no direct API route)
+   - ServiceAccount + ClusterRoleBinding (for OAuth proxy)
+   - OAuthClient (cluster-scoped, requires cluster-admin)
 
-### manifests/kubernetes/deployment-with-existing-observability.yaml
 
-**Purpose**: OpenClaw gateway manifest with namespace-local observability integration
-
-**Key Sections**:
-- ConfigMap with OpenClaw config (OpenTelemetry endpoint: local collector)
-- Secret for gateway token + observability credentials
-- PVCs for config + workspace
-- Deployment with init container (fix permissions)
-- Service + Ingress/Route
-- NetworkPolicy (allow egress to local collector)
-- NetworkPolicy (allow collector egress to observability-hub)
-
-**Observability Config**:
-```json
-{
-  "diagnostics": {
-    "enabled": true,
-    "otel": {
-      "enabled": true,
-      "endpoint": "http://otel-collector.openclaw.svc.cluster.local:4318",
-      "serviceName": "openclaw",
-      "traces": true,
-      "metrics": true,
-      "logs": true
-    }
-  }
-}
-```
-
-### observability/openclaw-otel-collector.yaml
-
-**Purpose**: OpenTelemetryCollector CR for openclaw namespace
-
-**Key Features**:
-- Receives OTLP from OpenClaw apps (4317/4318)
-- Adds namespace labels (`service.namespace=openclaw`)
-- Batches telemetry for efficiency
-- Forwards to central collector: `http://otel-collector.observability-hub.svc.cluster.local:4318`
-- Memory limit: 512Mi, CPU limit: 500m
-
-### observability/moltbook-otel-collector.yaml
-
-**Purpose**: OpenTelemetryCollector CR for moltbook namespace
-
-**Key Features**:
-- Receives OTLP from Moltbook apps (4317/4318)
-- Adds namespace labels (`service.namespace=moltbook`)
-- Batches telemetry for efficiency
-- Forwards to central collector: `http://otel-collector.observability-hub.svc.cluster.local:4318`
-- Memory limit: 512Mi, CPU limit: 500m
 
 ### agent-skills/moltbook/SKILL.md
 

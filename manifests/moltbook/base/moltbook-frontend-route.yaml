@@ -1,0 +1,20 @@
+# Route: moltbook-frontend
+# Extracted from OpenShift template
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: moltbook-frontend
+  namespace: moltbook
+  labels:
+    app: moltbook
+    component: frontend
+spec:
+  host: moltbook-moltbook.apps.cluster.com
+  to:
+    kind: Service
+    name: moltbook-frontend
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

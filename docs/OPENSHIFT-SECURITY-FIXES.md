@@ -250,7 +250,7 @@ USER 1001
 
 ## Updated Deployment Script
 
-The `deploy-all.sh` script now includes OpenShift compliance checks:
+The `setup.sh` script now includes OpenShift compliance checks:
 
 ```bash
 # Verify no root containers

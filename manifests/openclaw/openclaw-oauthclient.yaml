@@ -1,0 +1,11 @@
+# OAuthClient: openclaw (cluster-scoped)
+# NOTE: This requires cluster-admin permissions to create
+# Deploy with: oc apply -f manifests/openclaw/openclaw-oauthclient.yaml
+apiVersion: oauth.openshift.io/v1
+kind: OAuthClient
+metadata:
+  name: openclaw
+secret: "changeme-openclaw-oauth-client-secret-must-match"
+redirectURIs:
+- https://openclaw-openclaw.apps.cluster.com/oauth/callback
+grantMethod: auto

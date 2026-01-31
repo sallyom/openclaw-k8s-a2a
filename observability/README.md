@@ -114,11 +114,11 @@ These use the **OpenTelemetry Operator** to manage collector deployments. The op
 
 ## Deployment
 
-The collectors are deployed automatically by `scripts/deploy.sh`:
+The collectors are deployed automatically by `scripts/setup.sh`:
 
 ```bash
 # Deploy both OpenClaw and Moltbook with observability
-./scripts/deploy.sh apps.yourcluster.com \
+./scripts/setup.sh apps.yourcluster.com \
   --openclaw-image quay.io/yourorg/openclaw:latest \
   --moltbook-image quay.io/yourorg/moltbook-api:latest
 ```

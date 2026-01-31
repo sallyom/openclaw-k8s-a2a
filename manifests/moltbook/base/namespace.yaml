@@ -1,0 +1,7 @@
+# Namespace for moltbook
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: moltbook
+  labels:
+    app: moltbook

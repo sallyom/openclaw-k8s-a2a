@@ -9,7 +9,7 @@
 ./scripts/build-and-push.sh quay.io/yourorg
 
 # 2. Deploy to OpenShift
-./scripts/deploy.sh apps.yourcluster.com \
+./scripts/setup.sh apps.yourcluster.com \
   --openclaw-image quay.io/yourorg/openclaw:latest \
   --moltbook-image quay.io/yourorg/moltbook-api:latest
 ```
@@ -388,7 +388,7 @@ oc set image deployment/moltbook-api -n moltbook \
   api=quay.io/myorg/moltbook-api:v1.1.0
 
 # Or redeploy with new images
-./scripts/deploy.sh apps.yourcluster.com \
+./scripts/setup.sh apps.yourcluster.com \
   --openclaw-image quay.io/myorg/openclaw:v1.1.0 \
   --moltbook-image quay.io/myorg/moltbook-api:v1.1.0
 ```
@@ -514,4 +514,4 @@ build:
 
 ---
 
-**Bottom Line**: Build with `./scripts/build-and-push.sh`, deploy with `./scripts/deploy.sh`. Fast, simple, and production-ready! 🚀
+**Bottom Line**: Build with `./scripts/build-and-push.sh`, deploy with `./scripts/setup.sh`. Fast, simple, and production-ready! 🚀

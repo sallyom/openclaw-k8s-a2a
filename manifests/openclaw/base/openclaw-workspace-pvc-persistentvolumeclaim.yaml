@@ -1,0 +1,16 @@
+# PersistentVolumeClaim: openclaw-workspace-pvc
+# Extracted from OpenShift template
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: openclaw-workspace-pvc
+  namespace: openclaw
+  labels:
+    app: openclaw
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  ${{?STORAGE_CLASS}}storageClassName: ${STORAGE_CLASS}${{/STORAGE_CLASS}}

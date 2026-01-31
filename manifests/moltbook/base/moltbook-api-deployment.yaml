@@ -1,0 +1,187 @@
+# Deployment: moltbook-api
+# Extracted from OpenShift template
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: moltbook-api
+  namespace: moltbook
+  labels:
+    app: moltbook
+    component: api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: moltbook
+      component: api
+  template:
+    metadata:
+      labels:
+        app: moltbook
+        component: api
+    spec:
+      initContainers:
+      - name: wait-for-db
+        image: registry.redhat.io/rhel9/postgresql-16:latest
+        command:
+        - sh
+        - -c
+        - |
+          until pg_isready -h moltbook-postgresql -U $POSTGRESQL_USER -d $POSTGRESQL_DATABASE; do
+            echo "Waiting for database..."
+            sleep 2
+          done
+        env:
+        - name: POSTGRESQL_USER
+          valueFrom:
+            secretKeyRef:
+              name: moltbook-postgresql
+              key: database-user
+        - name: POSTGRESQL_DATABASE
+          valueFrom:
+            secretKeyRef:
+              name: moltbook-postgresql
+              key: database-name
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: moltbook-postgresql
+              key: database-password
+      - name: db-migrate
+        image: registry.redhat.io/rhel9/postgresql-16:latest
+        command:
+        - sh
+        - -c
+        - |
+          echo "Checking database schema..."
+          TABLES=$(psql -h moltbook-postgresql -U $POSTGRES_USER -d $POSTGRES_DB -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='posts';" 2>/dev/null | tr -d ' ')
+          if [ "$TABLES" = "0" ] || [ -z "$TABLES" ]; then
+            echo "Initializing database schema..."
+            psql -h moltbook-postgresql -U $POSTGRES_USER -d $POSTGRES_DB -f /schema/schema.sql
+            echo "Database schema initialized"
+          else
+            echo "Database already initialized, skipping"
+          fi
+        env:
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: moltbook-postgresql
+              key: database-user
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: moltbook-postgresql
+              key: database-password
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: moltbook-postgresql
+              key: database-name
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: moltbook-postgresql
+              key: database-password
+        volumeMounts:
+        - name: db-schema
+          mountPath: /schema
+      containers:
+      - name: api
+        image: quay.io/sallyom/moltbook-sfw:latest
+        ports:
+        - containerPort: 3000
+          protocol: TCP
+        env:
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: moltbook-postgresql
+              key: database-user
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: moltbook-postgresql
+              key: database-password
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: moltbook-postgresql
+              key: database-name
+        - name: DATABASE_URL
+          value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@moltbook-postgresql:5432/$(POSTGRES_DB)?sslmode=disable"
+        - name: REDIS_URL
+          value: redis://moltbook-redis:6379
+        - name: NODE_ENV
+          valueFrom:
+            configMapKeyRef:
+              name: moltbook-api-config
+              key: NODE_ENV
+        - name: PORT
+          valueFrom:
+            configMapKeyRef:
+              name: moltbook-api-config
+              key: PORT
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: moltbook-api-secrets
+              key: JWT_SECRET
+        - name: ADMIN_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: moltbook-api-secrets
+              key: ADMIN_API_KEY
+        - name: GUARDRAILS_MODE
+          value: enabled
+        - name: BASE_URL
+          value: https://moltbook-moltbook.apps.cluster.com
+        - name: CREDENTIAL_SCAN_ENABLED
+          value: 'true'
+        - name: CREDENTIAL_SCAN_ACTION
+          value: block
+        - name: CREDENTIAL_SCAN_PATTERNS
+          value: openai,github,aws,jwt,anthropic,slack,stripe,generic,password,api_key
+        - name: APPROVAL_REQUIRED
+          value: "true"
+        - name: APPROVAL_NOTIFY_WEBHOOK
+          value: ""
+        - name: ADMIN_AGENT_NAMES
+          value: ""
+        - name: AUDIT_LOG_ENABLED
+          value: 'true'
+        - name: AUDIT_LOG_RETENTION_DAYS
+          value: '365'
+        - name: OTEL_ENABLED
+          value: 'true'
+        - name: OTEL_SERVICE_NAME
+          value: moltbook-api
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://otel-collector.moltbook.svc.cluster.local:4318
+        - name: RBAC_ENABLED
+          value: 'true'
+        - name: RBAC_DEFAULT_ROLE
+          value: observer
+        livenessProbe:
+          httpGet:
+            path: /api/v1/health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /api/v1/health
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        resources:
+          requests:
+            memory: 256Mi
+            cpu: 100m
+          limits:
+            memory: 512Mi
+            cpu: 500m
+      volumes:
+      - name: db-schema
+        configMap:
+          name: moltbook-db-schema

@@ -1,0 +1,207 @@
+# Deployment: openclaw
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openclaw
+  namespace: openclaw
+  labels:
+    app: openclaw
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openclaw
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: openclaw
+      annotations:
+        prometheus.io/scrape: 'true'
+        prometheus.io/port: '18789'
+    spec:
+      serviceAccountName: openclaw-oauth-proxy
+      initContainers:
+      - name: init-config
+        image: registry.redhat.io/ubi9-minimal:latest
+        command:
+        - sh
+        - -c
+        - |
+          cp /config/openclaw.json /home/node/.openclaw/openclaw.json
+          chmod 644 /home/node/.openclaw/openclaw.json
+          ln -s /workspace /home/node/.openclaw/workspace
+          ls -la /home/node/.openclaw/
+        volumeMounts:
+        - name: openclaw-home
+          mountPath: /home/node/.openclaw
+        - name: config-template
+          mountPath: /config
+        - name: workspace-volume
+          mountPath: /workspace
+      containers:
+      - name: oauth-proxy
+        image: quay.io/openshift/origin-oauth-proxy:4.14
+        args:
+        - --http-address=:8443
+        - --https-address=
+        - --provider=openshift
+        - --upstream=http://localhost:18789
+        - --client-id=openclaw
+        - --client-secret-file=/etc/oauth/config/client-secret
+        - --cookie-secret-file=/etc/oauth/config/cookie_secret
+        - --cookie-expire=23h0m0s
+        - --pass-access-token
+        - --scope=user:full
+        - --openshift-delegate-urls={"/":{"resource":"projects","verb":"list"}}
+        - --skip-auth-regex=^/metrics
+        ports:
+        - containerPort: 8443
+          name: oauth-ui
+        volumeMounts:
+        - name: oauth-config
+          mountPath: /etc/oauth/config
+        - name: proxy-tls
+          mountPath: /etc/tls/private
+        livenessProbe:
+          httpGet:
+            path: /oauth/healthz
+            port: oauth-ui
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /oauth/healthz
+            port: oauth-ui
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests:
+            memory: 64Mi
+            cpu: 50m
+          limits:
+            memory: 128Mi
+            cpu: 200m
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+      - name: gateway
+        image: quay.io/sallyom/openclaw:latest
+        imagePullPolicy: Always
+        command:
+        - node
+        - /app/dist/index.js
+        - gateway
+        - run
+        - --bind
+        - lan
+        - --port
+        - '18789'
+        - --verbose
+        ports:
+        - name: gateway
+          containerPort: 18789
+          protocol: TCP
+        - name: bridge
+          containerPort: 18790
+          protocol: TCP
+        env:
+        - name: HOME
+          value: /home/node
+        - name: OPENCLAW_CONFIG_DIR
+          value: /home/node/.openclaw
+        - name: TERM
+          value: xterm-256color
+        - name: NODE_ENV
+          value: production
+        - name: OPENCLAW_GATEWAY_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: openclaw-secrets
+              key: OPENCLAW_GATEWAY_TOKEN
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: openclaw-secrets
+              key: OTEL_EXPORTER_OTLP_ENDPOINT
+              optional: true
+        - name: MLFLOW_TRACKING_URI
+          valueFrom:
+            secretKeyRef:
+              name: openclaw-secrets
+              key: MLFLOW_TRACKING_URI
+              optional: true
+        - name: LANGFUSE_HOST
+          valueFrom:
+            secretKeyRef:
+              name: openclaw-secrets
+              key: LANGFUSE_HOST
+              optional: true
+        - name: LANGFUSE_PUBLIC_KEY
+          valueFrom:
+            secretKeyRef:
+              name: openclaw-secrets
+              key: LANGFUSE_PUBLIC_KEY
+              optional: true
+        - name: LANGFUSE_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: openclaw-secrets
+              key: LANGFUSE_SECRET_KEY
+              optional: true
+        - name: OTEL_SERVICE_NAME
+          value: openclaw
+        resources:
+          requests:
+            memory: 512Mi
+            cpu: 250m
+          limits:
+            memory: 2Gi
+            cpu: 1000m
+#         livenessProbe:
+#           httpGet:
+#             path: /
+#             port: 18789
+#           initialDelaySeconds: 30
+#           periodSeconds: 10
+#           timeoutSeconds: 5
+#           failureThreshold: 3
+#         readinessProbe:
+#           httpGet:
+#             path: /
+#             port: 18789
+#           initialDelaySeconds: 10
+#           periodSeconds: 5
+#           timeoutSeconds: 3
+        volumeMounts:
+        - name: openclaw-home
+          mountPath: /home/node/.openclaw
+        - name: workspace-volume
+          mountPath: /workspace
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: oauth-config
+        secret:
+          secretName: openclaw-oauth-config
+      - name: proxy-tls
+        secret:
+          secretName: openclaw-proxy-tls
+      - name: openclaw-home
+        persistentVolumeClaim:
+          claimName: openclaw-home-pvc
+      - name: config-template
+        configMap:
+          name: openclaw-config
+      - name: workspace-volume
+        persistentVolumeClaim:
+          claimName: openclaw-workspace-pvc

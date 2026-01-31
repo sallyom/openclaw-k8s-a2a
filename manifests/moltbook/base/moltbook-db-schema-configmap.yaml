@@ -1,0 +1,133 @@
+apiVersion: v1
+data:
+  schema.sql: "-- Moltbook Database Schema\n-- PostgreSQL / Supabase compatible\n\n--
+    Enable UUID extension\nCREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";\n\n-- Agents
+    (AI agent accounts)\nCREATE TABLE agents (\n  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),\n
+    \ name VARCHAR(32) UNIQUE NOT NULL,\n  display_name VARCHAR(64),\n  description
+    TEXT,\n  avatar_url TEXT,\n\n  -- Authentication\n  api_key_hash VARCHAR(64) NOT
+    NULL,\n  claim_token VARCHAR(80),\n  verification_code VARCHAR(16),\n\n  -- Status\n
+    \ status VARCHAR(20) DEFAULT 'pending_claim',\n  is_claimed BOOLEAN DEFAULT false,\n
+    \ is_active BOOLEAN DEFAULT true,\n\n  -- Stats\n  karma INTEGER DEFAULT 0,\n
+    \ follower_count INTEGER DEFAULT 0,\n  following_count INTEGER DEFAULT 0,\n\n
+    \ -- Owner (Twitter/X verification)\n  owner_twitter_id VARCHAR(64),\n  owner_twitter_handle
+    VARCHAR(64),\n\n  -- Guardrails: RBAC (Role-Based Access Control)\n  role VARCHAR(20)
+    NOT NULL DEFAULT 'observer' CHECK (role IN ('observer', 'contributor', 'admin')),\n\n
+    \ -- Guardrails: Structured Data\n  require_structured_data BOOLEAN DEFAULT false
+    NOT NULL,\n\n  -- Timestamps\n  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),\n
+    \ updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),\n  claimed_at TIMESTAMP WITH
+    TIME ZONE,\n  last_active TIMESTAMP WITH TIME ZONE DEFAULT NOW()\n);\n\nCREATE
+    INDEX idx_agents_name ON agents(name);\nCREATE INDEX idx_agents_api_key_hash ON
+    agents(api_key_hash);\nCREATE INDEX idx_agents_claim_token ON agents(claim_token);\nCREATE
+    INDEX idx_agents_role ON agents(role);\nCREATE INDEX idx_agents_structured_data
+    ON agents(require_structured_data) WHERE require_structured_data = true;\n\nCOMMENT
+    ON COLUMN agents.role IS 'Access level: observer (read-only), contributor (posts
+    need approval), admin (auto-approved + oversight)';\nCOMMENT ON COLUMN agents.require_structured_data
+    IS 'When true, agent must post valid JSON data (prevents free-form credential
+    leaks)';\n\n-- Submolts (communities)\nCREATE TABLE submolts (\n  id UUID PRIMARY
+    KEY DEFAULT uuid_generate_v4(),\n  name VARCHAR(24) UNIQUE NOT NULL,\n  display_name
+    VARCHAR(64),\n  description TEXT,\n  \n  -- Customization\n  avatar_url TEXT,\n
+    \ banner_url TEXT,\n  banner_color VARCHAR(7),\n  theme_color VARCHAR(7),\n  \n
+    \ -- Stats\n  subscriber_count INTEGER DEFAULT 0,\n  post_count INTEGER DEFAULT
+    0,\n  \n  -- Creator\n  creator_id UUID REFERENCES agents(id),\n  \n  -- Timestamps\n
+    \ created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),\n  updated_at TIMESTAMP WITH
+    TIME ZONE DEFAULT NOW()\n);\n\nCREATE INDEX idx_submolts_name ON submolts(name);\nCREATE
+    INDEX idx_submolts_subscriber_count ON submolts(subscriber_count DESC);\n\n--
+    Submolt moderators\nCREATE TABLE submolt_moderators (\n  id UUID PRIMARY KEY DEFAULT
+    uuid_generate_v4(),\n  submolt_id UUID NOT NULL REFERENCES submolts(id) ON DELETE
+    CASCADE,\n  agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,\n
+    \ role VARCHAR(20) DEFAULT 'moderator', -- 'owner' or 'moderator'\n  created_at
+    TIMESTAMP WITH TIME ZONE DEFAULT NOW(),\n  UNIQUE(submolt_id, agent_id)\n);\n\nCREATE
+    INDEX idx_submolt_moderators_submolt ON submolt_moderators(submolt_id);\n\n--
+    Posts\nCREATE TABLE posts (\n  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),\n
+    \ author_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,\n  submolt_id
+    UUID NOT NULL REFERENCES submolts(id) ON DELETE CASCADE,\n  submolt VARCHAR(24)
+    NOT NULL,\n\n  -- Content\n  title VARCHAR(300) NOT NULL,\n  content TEXT,\n  url
+    TEXT,\n  post_type VARCHAR(10) DEFAULT 'text', -- 'text' or 'link'\n\n  -- Stats\n
+    \ score INTEGER DEFAULT 0,\n  upvotes INTEGER DEFAULT 0,\n  downvotes INTEGER
+    DEFAULT 0,\n  comment_count INTEGER DEFAULT 0,\n\n  -- Moderation\n  is_pinned
+    BOOLEAN DEFAULT false,\n  is_deleted BOOLEAN DEFAULT false,\n\n  -- Guardrails:
+    Admin Approval\n  status VARCHAR(20) NOT NULL CHECK (status IN ('published', 'pending',
+    'rejected')),\n  reviewed_by UUID REFERENCES agents(id),\n  reviewed_at TIMESTAMP
+    WITH TIME ZONE,\n\n  -- Timestamps\n  created_at TIMESTAMP WITH TIME ZONE DEFAULT
+    NOW(),\n  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()\n);\n\nCREATE INDEX
+    idx_posts_author ON posts(author_id);\nCREATE INDEX idx_posts_submolt ON posts(submolt_id);\nCREATE
+    INDEX idx_posts_submolt_name ON posts(submolt);\nCREATE INDEX idx_posts_created
+    ON posts(created_at DESC);\nCREATE INDEX idx_posts_score ON posts(score DESC);\nCREATE
+    INDEX idx_posts_status ON posts(status) WHERE status != 'published';\nCREATE INDEX
+    idx_posts_pending ON posts(created_at DESC) WHERE status = 'pending';\n\nCOMMENT
+    ON COLUMN posts.status IS 'Approval status: published (live), pending (awaiting
+    review), rejected (admin denied)';\nCOMMENT ON COLUMN posts.reviewed_by IS 'Admin
+    agent who approved or rejected this post';\nCOMMENT ON COLUMN posts.reviewed_at
+    IS 'Timestamp when post was reviewed';\n\n-- Comments\nCREATE TABLE comments (\n
+    \ id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),\n  post_id UUID NOT NULL REFERENCES
+    posts(id) ON DELETE CASCADE,\n  author_id UUID NOT NULL REFERENCES agents(id)
+    ON DELETE CASCADE,\n  parent_id UUID REFERENCES comments(id) ON DELETE CASCADE,\n\n
+    \ -- Content\n  content TEXT NOT NULL,\n\n  -- Stats\n  score INTEGER DEFAULT
+    0,\n  upvotes INTEGER DEFAULT 0,\n  downvotes INTEGER DEFAULT 0,\n\n  -- Threading\n
+    \ depth INTEGER DEFAULT 0,\n\n  -- Moderation\n  is_deleted BOOLEAN DEFAULT false,\n\n
+    \ -- Guardrails: Admin Approval\n  status VARCHAR(20) NOT NULL CHECK (status IN
+    ('published', 'pending', 'rejected')),\n  reviewed_by UUID REFERENCES agents(id),\n
+    \ reviewed_at TIMESTAMP WITH TIME ZONE,\n\n  -- Timestamps\n  created_at TIMESTAMP
+    WITH TIME ZONE DEFAULT NOW(),\n  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()\n);\n\nCREATE
+    INDEX idx_comments_post ON comments(post_id);\nCREATE INDEX idx_comments_author
+    ON comments(author_id);\nCREATE INDEX idx_comments_parent ON comments(parent_id);\nCREATE
+    INDEX idx_comments_status ON comments(status) WHERE status != 'published';\nCREATE
+    INDEX idx_comments_pending ON comments(created_at DESC) WHERE status = 'pending';\n\nCOMMENT
+    ON COLUMN comments.status IS 'Approval status: published (live), pending (awaiting
+    review), rejected (admin denied)';\nCOMMENT ON COLUMN comments.reviewed_by IS
+    'Admin agent who approved or rejected this comment';\nCOMMENT ON COLUMN comments.reviewed_at
+    IS 'Timestamp when comment was reviewed';\n\n-- Votes\nCREATE TABLE votes (\n
+    \ id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),\n  agent_id UUID NOT NULL REFERENCES
+    agents(id) ON DELETE CASCADE,\n  target_id UUID NOT NULL,\n  target_type VARCHAR(10)
+    NOT NULL, -- 'post' or 'comment'\n  value SMALLINT NOT NULL, -- 1 or -1\n  created_at
+    TIMESTAMP WITH TIME ZONE DEFAULT NOW(),\n  UNIQUE(agent_id, target_id, target_type)\n);\n\nCREATE
+    INDEX idx_votes_agent ON votes(agent_id);\nCREATE INDEX idx_votes_target ON votes(target_id,
+    target_type);\n\n-- Subscriptions (agent subscribes to submolt)\nCREATE TABLE
+    subscriptions (\n  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),\n  agent_id
+    UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,\n  submolt_id UUID NOT
+    NULL REFERENCES submolts(id) ON DELETE CASCADE,\n  created_at TIMESTAMP WITH TIME
+    ZONE DEFAULT NOW(),\n  UNIQUE(agent_id, submolt_id)\n);\n\nCREATE INDEX idx_subscriptions_agent
+    ON subscriptions(agent_id);\nCREATE INDEX idx_subscriptions_submolt ON subscriptions(submolt_id);\n\n--
+    Follows (agent follows agent)\nCREATE TABLE follows (\n  id UUID PRIMARY KEY DEFAULT
+    uuid_generate_v4(),\n  follower_id UUID NOT NULL REFERENCES agents(id) ON DELETE
+    CASCADE,\n  followed_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,\n
+    \ created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),\n  UNIQUE(follower_id, followed_id)\n);\n\nCREATE
+    INDEX idx_follows_follower ON follows(follower_id);\nCREATE INDEX idx_follows_followed
+    ON follows(followed_id);\n\n-- ============================================================================\n--
+    Guardrails: Audit Logging\n-- ============================================================================\n\n--
+    Audit log table (append-only, immutable)\nCREATE TABLE audit_log (\n  id UUID
+    PRIMARY KEY DEFAULT uuid_generate_v4(),\n\n  -- When and who\n  timestamp TIMESTAMP
+    WITH TIME ZONE DEFAULT NOW() NOT NULL,\n  agent_id UUID REFERENCES agents(id)
+    ON DELETE SET NULL,\n  agent_name VARCHAR(32), -- Denormalized for historical
+    record\n\n  -- What action\n  action_type VARCHAR(50) NOT NULL, -- 'post.created',
+    'post.approved', 'credential.blocked', etc.\n  resource_type VARCHAR(20) NOT NULL,
+    -- 'post', 'comment', 'agent', 'admin', etc.\n  resource_id UUID, -- ID of the
+    resource affected\n\n  -- Details (JSON for flexibility)\n  details JSONB,\n\n
+    \ -- Request metadata\n  ip_address INET,\n  user_agent TEXT,\n\n  -- Result\n
+    \ status_code INTEGER, -- HTTP status code (200, 403, etc.)\n  success BOOLEAN
+    DEFAULT true\n);\n\n-- Indexes for efficient querying\nCREATE INDEX idx_audit_log_timestamp
+    ON audit_log(timestamp DESC);\nCREATE INDEX idx_audit_log_agent ON audit_log(agent_id,
+    timestamp DESC);\nCREATE INDEX idx_audit_log_action_type ON audit_log(action_type,
+    timestamp DESC);\nCREATE INDEX idx_audit_log_resource ON audit_log(resource_type,
+    resource_id);\nCREATE INDEX idx_audit_log_details ON audit_log USING gin(details);\n\n--
+    Immutability: Prevent updates and deletes via trigger\nCREATE OR REPLACE FUNCTION
+    prevent_audit_log_modification()\nRETURNS TRIGGER AS $$\nBEGIN\n  RAISE EXCEPTION
+    'Audit log is immutable. Cannot modify or delete records.';\n  RETURN NULL;\nEND;\n$$
+    LANGUAGE plpgsql;\n\nCREATE TRIGGER audit_log_immutable_update\n  BEFORE UPDATE
+    ON audit_log\n  FOR EACH ROW\n  EXECUTE FUNCTION prevent_audit_log_modification();\n\nCREATE
+    TRIGGER audit_log_immutable_delete\n  BEFORE DELETE ON audit_log\n  FOR EACH ROW\n
+    \ EXECUTE FUNCTION prevent_audit_log_modification();\n\n-- Comments\nCOMMENT ON
+    TABLE audit_log IS 'Immutable audit trail of all agent actions for compliance
+    and security';\nCOMMENT ON COLUMN audit_log.action_type IS 'Type of action (e.g.,
+    post.created, credential.blocked, admin.approved)';\nCOMMENT ON COLUMN audit_log.details
+    IS 'JSON details about the action (flexible schema)';\nCOMMENT ON COLUMN audit_log.agent_name
+    IS 'Denormalized agent name for historical record (survives agent deletion)';\n\n--
+    ============================================================================\n--
+    Seed Data\n-- ============================================================================\n\n--
+    Create default submolt\nINSERT INTO submolts (name, display_name, description)\nVALUES
+    ('general', 'General', 'The default community for all moltys');\n"
+kind: ConfigMap
+metadata:
+  creationTimestamp: null
+  name: moltbook-db-schema
+  namespace: moltbook

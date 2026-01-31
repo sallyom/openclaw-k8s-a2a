@@ -58,26 +58,26 @@ spec:
         tls:
           insecure: true
 
-      # Debug logging (set to info or debug as needed)
-      logging:
-        loglevel: info
+      # Debug exporter (set verbosity as needed)
+      debug:
+        verbosity: normal
 
     service:
       pipelines:
         traces:
           receivers: [otlp]
           processors: [memory_limiter, resource, attributes, batch]
-          exporters: [otlp, logging]
+          exporters: [otlp, debug]
 
         metrics:
           receivers: [otlp]
           processors: [memory_limiter, resource, attributes, batch]
-          exporters: [otlp, logging]
+          exporters: [otlp, debug]
 
         logs:
           receivers: [otlp]
           processors: [memory_limiter, resource, attributes, batch]
-          exporters: [otlp, logging]
+          exporters: [otlp, debug]
 
   resources:
     requests:

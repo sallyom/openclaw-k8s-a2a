@@ -1,0 +1,18 @@
+# Service: moltbook-postgresql
+# Extracted from OpenShift template
+apiVersion: v1
+kind: Service
+metadata:
+  name: moltbook-postgresql
+  namespace: moltbook
+  labels:
+    app: moltbook
+    component: database
+spec:
+  ports:
+  - name: postgresql
+    port: 5432
+    targetPort: 5432
+  selector:
+    app: moltbook
+    component: database

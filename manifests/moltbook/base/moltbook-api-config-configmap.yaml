@@ -1,0 +1,15 @@
+# ConfigMap: moltbook-api-config
+# Extracted from OpenShift template
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: moltbook-api-config
+  namespace: moltbook
+  labels:
+    app: moltbook
+    component: api
+data:
+  NODE_ENV: production
+  PORT: '3000'
+  CORS_ORIGIN: '*'
+  RATE_LIMIT_ENABLED: 'true'

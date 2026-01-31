@@ -82,12 +82,13 @@ check_prerequisites() {
 build_openclaw() {
   section "Building OpenClaw"
 
-  OPENCLAW_DIR="$(pwd)"
+  OPENCLAW_DIR="/tmp/openclaw-build"
 
-  if [ ! -f "$OPENCLAW_DIR/package.json" ]; then
-    log_error "Not in openclaw directory. package.json not found."
-    exit 1
-  fi
+  log_info "Cloning OpenClaw..."
+  rm -rf "$OPENCLAW_DIR"
+  git clone https://github.com/openclaw/openclaw.git "$OPENCLAW_DIR"
+
+  cd "$OPENCLAW_DIR"
 
   log_info "Building OpenClaw image..."
 
@@ -158,44 +159,17 @@ build_moltbook() {
 
   cd "$MOLTBOOK_DIR"
 
-  # Create OpenShift-compatible Dockerfile
-  cat > Dockerfile.openshift << 'EOF'
-FROM node:20-slim
+  log_info "Using Dockerfile from repository..."
 
-WORKDIR /app
-
-# Copy package files
-COPY package*.json ./
-
-# Install dependencies
-RUN npm ci --only=production
-
-# Copy source
-COPY . .
-
-# Build if needed
-RUN if [ -f "tsconfig.json" ]; then npm run build || true; fi
-
-ENV NODE_ENV=production
-ENV PORT=3000
-
-# OpenShift compatibility
-RUN chmod -R 777 /app && \
-    mkdir -p /home/node && \
-    chmod -R 777 /home/node
-
-# Non-root user
-USER 1001
-
-EXPOSE 3000
-
-CMD ["node", "src/index.js"]
-EOF
+  if [ ! -f "Dockerfile" ]; then
+    log_error "Dockerfile not found in repository"
+    exit 1
+  fi
 
   log_info "Building Moltbook API image..."
 
   podman build \
-    -f Dockerfile.openshift \
+    -f Dockerfile \
     -t "$MOLTBOOK_TAG" \
     --platform linux/amd64 \
     .
@@ -260,14 +234,15 @@ display_summary() {
   echo ""
   echo -e "${YELLOW}Next Steps:${NC}"
   echo ""
-  echo "1. Deploy with custom images:"
-  echo "   ./deploy-all.sh apps.yourcluster.com \\"
-  echo "     --openclaw-image $REGISTRY/$OPENCLAW_TAG \\"
-  echo "     --moltbook-image $REGISTRY/$MOLTBOOK_TAG"
-  echo ""
-  echo "2. Or update manifests manually:"
-  echo "   # In deployment YAML:"
+  echo "1. Update manifests with your images:"
+  echo "   # Edit manifests/openclaw/base/openclaw-deployment.yaml"
   echo "   image: $REGISTRY/$OPENCLAW_TAG"
+  echo ""
+  echo "   # Edit manifests/moltbook/base/moltbook-api-deployment.yaml"
+  echo "   image: $REGISTRY/$MOLTBOOK_TAG"
+  echo ""
+  echo "2. Deploy with setup script:"
+  echo "   ./scripts/setup.sh"
   echo ""
   echo -e "${GREEN}Ready to deploy! 🚀${NC}"
   echo ""

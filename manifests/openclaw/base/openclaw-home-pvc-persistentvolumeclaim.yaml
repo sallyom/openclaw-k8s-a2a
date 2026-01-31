@@ -1,0 +1,15 @@
+# PersistentVolumeClaim: openclaw-home-pvc
+# Stores OpenClaw configuration and pairing data
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: openclaw-home-pvc
+  namespace: openclaw
+  labels:
+    app: openclaw
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

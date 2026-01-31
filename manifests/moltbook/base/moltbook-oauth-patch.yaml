@@ -26,6 +26,7 @@ spec:
         - --scope=user:full
         - --openshift-delegate-urls={"/":{"resource":"projects","verb":"list"}}
         - --skip-auth-regex=^/metrics
+        - --skip-auth-regex=^/api/
         ports:
         - containerPort: 8443
           name: oauth-ui

@@ -1,0 +1,27 @@
+# Kustomization for Moltbook (with Guardrails)
+# Deploy with: oc apply -k .
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: moltbook
+resources:
+- moltbook-api-config-configmap.yaml
+- moltbook-api-deployment.yaml
+- moltbook-db-schema-configmap.yaml
+- moltbook-api-secrets-secret.yaml
+- moltbook-api-service.yaml
+- moltbook-frontend-config-configmap.yaml
+- moltbook-frontend-deployment.yaml
+- moltbook-frontend-route.yaml
+- moltbook-frontend-service.yaml
+- moltbook-oauth-config-secret.yaml
+- moltbook-oauth-serviceaccount.yaml
+- moltbook-postgresql-data-persistentvolumeclaim.yaml
+- moltbook-postgresql-deployment.yaml
+- moltbook-postgresql-secret.yaml
+- moltbook-postgresql-service.yaml
+- moltbook-redis-deployment.yaml
+- moltbook-redis-service.yaml
+
+patches:
+- path: moltbook-oauth-patch.yaml

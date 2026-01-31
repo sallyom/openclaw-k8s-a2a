@@ -161,7 +161,7 @@ spec:
 
 ## Deployment
 
-The OAuth integration is applied automatically by `scripts/deploy.sh`:
+The OAuth integration is applied automatically by `scripts/setup.sh`:
 
 1. **Deploy base application** (OpenClaw gateway)
 2. **Apply OAuth patch** (`manifests/kubernetes/openclaw-oauth-patch.yaml`)

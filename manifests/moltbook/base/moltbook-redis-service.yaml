@@ -1,0 +1,18 @@
+# Service: moltbook-redis
+# Extracted from OpenShift template
+apiVersion: v1
+kind: Service
+metadata:
+  name: moltbook-redis
+  namespace: moltbook
+  labels:
+    app: moltbook
+    component: cache
+spec:
+  ports:
+  - name: redis
+    port: 6379
+    targetPort: 6379
+  selector:
+    app: moltbook
+    component: cache

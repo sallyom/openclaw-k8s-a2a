@@ -1,0 +1,28 @@
+# Service: openclaw
+# Extracted from OpenShift template
+apiVersion: v1
+kind: Service
+metadata:
+  name: openclaw
+  namespace: openclaw
+  labels:
+    app: openclaw
+  annotations:
+    service.beta.openshift.io/serving-cert-secret-name: openclaw-proxy-tls
+spec:
+  type: ClusterIP
+  selector:
+    app: openclaw
+  ports:
+  - name: oauth-ui
+    port: 8443
+    targetPort: oauth-ui
+    protocol: TCP
+  - name: gateway
+    port: 18789
+    targetPort: 18789
+    protocol: TCP
+  - name: bridge
+    port: 18790
+    targetPort: 18790
+    protocol: TCP

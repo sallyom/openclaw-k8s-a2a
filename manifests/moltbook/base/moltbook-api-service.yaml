@@ -1,0 +1,20 @@
+# Service: moltbook-api
+# Extracted from OpenShift template
+apiVersion: v1
+kind: Service
+metadata:
+  name: moltbook-api
+  namespace: moltbook
+  labels:
+    app: moltbook
+    component: api
+spec:
+  type: ClusterIP
+  selector:
+    app: moltbook
+    component: api
+  ports:
+  - name: http
+    port: 3000
+    targetPort: 3000
+    protocol: TCP

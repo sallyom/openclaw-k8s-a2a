@@ -1,0 +1,73 @@
+# ConfigMap: openclaw-config
+# Extracted from OpenShift template
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openclaw-config
+  namespace: openclaw
+  labels:
+    app: openclaw
+data:
+  openclaw.json: |
+    {
+      "gateway": {
+        "mode": "local",
+        "bind": "lan",
+        "port": 18789,
+        "trustedProxies": ["10.131.0.2"],
+        "auth": {
+          "mode": "token",
+          "allowTailscale": false
+        },
+        "controlUi": {
+          "enabled": true,
+          "dangerouslyDisableDeviceAuth": true
+        }
+      },
+      "diagnostics": {
+        "enabled": true,
+        "otel": {
+          "enabled": true,
+          "protocol": "http/protobuf",
+          "serviceName": "openclaw",
+          "sampleRate": 1.0,
+          "traces": true,
+          "metrics": true,
+          "logs": true,
+          "flushIntervalMs": 5000
+        }
+      },
+      "models": {
+        "providers": {
+          "nerc": {
+            "baseUrl": "http://gpt-oss-20b-demo-mlflow-agent-tracing.apps.cluster.com/v1",
+            "api": "openai-completions",
+            "apiKey": "fakekey",
+            "models": [
+              {
+                "id": "openai/gpt-oss-20b",
+                "name": "GPT OSS 20B",
+                "reasoning": false,
+                "input": ["text"],
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0
+                },
+                "contextWindow": 32768,
+                "maxTokens": 8192
+              }
+            ]
+          }
+        }
+      },
+      "agents": {
+        "defaults": {
+          "workspace": "/home/node/.openclaw/workspace",
+          "model": {
+            "primary": "nerc/openai/gpt-oss-20b"
+          }
+        }
+      }
+    }

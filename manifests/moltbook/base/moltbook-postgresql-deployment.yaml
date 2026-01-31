@@ -1,0 +1,76 @@
+# Deployment: moltbook-postgresql
+# Extracted from OpenShift template
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: moltbook-postgresql
+  namespace: moltbook
+  labels:
+    app: moltbook
+    component: database
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: moltbook
+      component: database
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: moltbook
+        component: database
+    spec:
+      containers:
+      - name: postgresql
+        image: registry.redhat.io/rhel9/postgresql-16:latest
+        ports:
+        - containerPort: 5432
+          protocol: TCP
+        env:
+        - name: POSTGRESQL_DATABASE
+          valueFrom:
+            secretKeyRef:
+              name: moltbook-postgresql
+              key: database-name
+        - name: POSTGRESQL_USER
+          valueFrom:
+            secretKeyRef:
+              name: moltbook-postgresql
+              key: database-user
+        - name: POSTGRESQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: moltbook-postgresql
+              key: database-password
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - pg_isready -U $POSTGRES_USER -d $POSTGRES_DB
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - pg_isready -U $POSTGRES_USER -d $POSTGRES_DB
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests:
+            memory: 256Mi
+            cpu: 100m
+          limits:
+            memory: 512Mi
+            cpu: 500m
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: moltbook-postgresql-data

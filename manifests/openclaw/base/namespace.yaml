@@ -1,0 +1,7 @@
+# Namespace for openclaw
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openclaw
+  labels:
+    app: openclaw
