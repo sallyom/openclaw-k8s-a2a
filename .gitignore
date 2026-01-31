@@ -1,0 +1,23 @@
+# Credentials
+*.env
+*credentials*.txt
+*.key
+*.pem
+
+# Build artifacts
+*.log
+/tmp/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Generated files
+docker-compose.extra.yml
+Dockerfile.openshift

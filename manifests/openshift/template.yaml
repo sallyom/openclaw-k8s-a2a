@@ -1,0 +1,481 @@
+---
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: openclaw
+  annotations:
+    description: "OpenClaw AI Assistant Gateway with full OpenTelemetry observability"
+    tags: "ai,assistant,openclaw,opentelemetry"
+    iconClass: "icon-nodejs"
+    openshift.io/display-name: "OpenClaw Gateway"
+    openshift.io/documentation-url: "https://docs.openclaw.ai"
+    openshift.io/support-url: "https://github.com/openclaw/openclaw"
+
+labels:
+  app: openclaw
+  template: openclaw
+
+parameters:
+- name: APPLICATION_NAME
+  displayName: Application Name
+  description: The name for the application
+  value: openclaw
+  required: true
+
+- name: NAMESPACE
+  displayName: Namespace
+  description: The OpenShift namespace/project
+  value: openclaw
+  required: true
+
+- name: GIT_REPOSITORY
+  displayName: Git Repository
+  description: Git source repository URL
+  value: https://github.com/openclaw/openclaw.git
+  required: true
+
+- name: GIT_BRANCH
+  displayName: Git Branch
+  description: Git branch to build from
+  value: main
+  required: true
+
+- name: GATEWAY_TOKEN
+  displayName: Gateway Token
+  description: "Secure gateway token (generate with: openssl rand -hex 32)"
+  generate: expression
+  from: "[a-f0-9]{64}"
+  required: true
+
+- name: GATEWAY_HOSTNAME
+  displayName: Gateway Hostname
+  description: Hostname for the Route (e.g., openclaw.apps.yourcluster.com)
+  required: true
+
+- name: OTEL_ENDPOINT
+  displayName: OpenTelemetry Collector Endpoint
+  description: OTLP HTTP endpoint (e.g., http://otel-collector:4318)
+  value: http://otel-collector.openclaw.svc.cluster.local:4318
+  required: false
+
+- name: MLFLOW_TRACKING_URI
+  displayName: MLFlow Tracking URI
+  description: MLFlow server URI (e.g., http://mlflow:5000)
+  value: ""
+  required: false
+
+- name: LANGFUSE_HOST
+  displayName: Langfuse Host
+  description: Langfuse server URL (e.g., http://langfuse:3000)
+  value: ""
+  required: false
+
+- name: LANGFUSE_PUBLIC_KEY
+  displayName: Langfuse Public Key
+  description: Langfuse public API key
+  value: ""
+  required: false
+
+- name: LANGFUSE_SECRET_KEY
+  displayName: Langfuse Secret Key
+  description: Langfuse secret API key
+  value: ""
+  required: false
+
+- name: STORAGE_CLASS
+  displayName: Storage Class
+  description: Storage class for PVCs
+  value: ""
+  required: false
+
+- name: CONFIG_STORAGE_SIZE
+  displayName: Config Storage Size
+  description: Size of config PVC
+  value: 1Gi
+  required: true
+
+- name: WORKSPACE_STORAGE_SIZE
+  displayName: Workspace Storage Size
+  description: Size of workspace PVC
+  value: 10Gi
+  required: true
+
+- name: MEMORY_REQUEST
+  displayName: Memory Request
+  description: Requested memory
+  value: 512Mi
+  required: true
+
+- name: MEMORY_LIMIT
+  displayName: Memory Limit
+  description: Memory limit
+  value: 2Gi
+  required: true
+
+- name: CPU_REQUEST
+  displayName: CPU Request
+  description: Requested CPU
+  value: 500m
+  required: true
+
+- name: CPU_LIMIT
+  displayName: CPU Limit
+  description: CPU limit
+  value: "2"
+  required: true
+
+objects:
+
+# ImageStream for built images
+- apiVersion: image.openshift.io/v1
+  kind: ImageStream
+  metadata:
+    name: ${APPLICATION_NAME}
+    namespace: ${NAMESPACE}
+    labels:
+      app: ${APPLICATION_NAME}
+
+# BuildConfig with S2I
+- apiVersion: build.openshift.io/v1
+  kind: BuildConfig
+  metadata:
+    name: ${APPLICATION_NAME}
+    namespace: ${NAMESPACE}
+    labels:
+      app: ${APPLICATION_NAME}
+  spec:
+    output:
+      to:
+        kind: ImageStreamTag
+        name: ${APPLICATION_NAME}:latest
+    source:
+      type: Git
+      git:
+        uri: ${GIT_REPOSITORY}
+        ref: ${GIT_BRANCH}
+      contextDir: /
+    strategy:
+      type: Docker
+      dockerStrategy:
+        dockerfilePath: Dockerfile
+        env:
+        - name: OPENCLAW_DOCKER_APT_PACKAGES
+          value: ""
+    triggers:
+    - type: ConfigChange
+    - type: ImageChange
+    runPolicy: Serial
+
+# ConfigMap for OpenClaw configuration
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: ${APPLICATION_NAME}-config
+    namespace: ${NAMESPACE}
+    labels:
+      app: ${APPLICATION_NAME}
+  data:
+    openclaw.json: |
+      {
+        "gateway": {
+          "mode": "local",
+          "bind": "lan",
+          "port": 18789,
+          "auth": {
+            "mode": "token",
+            "allowTailscale": false
+          },
+          "controlUi": {
+            "enabled": true
+          }
+        },
+        "diagnostics": {
+          "enabled": true,
+          "otel": {
+            "enabled": true,
+            "protocol": "http/protobuf",
+            "serviceName": "openclaw",
+            "sampleRate": 1.0,
+            "traces": true,
+            "metrics": true,
+            "logs": true,
+            "flushIntervalMs": 5000
+          }
+        },
+        "agents": {
+          "defaults": {
+            "workspace": "/home/node/.openclaw/workspace"
+          }
+        }
+      }
+
+# Secret for sensitive data
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    name: ${APPLICATION_NAME}-secrets
+    namespace: ${NAMESPACE}
+    labels:
+      app: ${APPLICATION_NAME}
+  type: Opaque
+  stringData:
+    OPENCLAW_GATEWAY_TOKEN: ${GATEWAY_TOKEN}
+    OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_ENDPOINT}
+    MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
+    LANGFUSE_HOST: ${LANGFUSE_HOST}
+    LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+    LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+
+# PersistentVolumeClaim for config
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: ${APPLICATION_NAME}-config-pvc
+    namespace: ${NAMESPACE}
+    labels:
+      app: ${APPLICATION_NAME}
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: ${CONFIG_STORAGE_SIZE}
+    ${{?STORAGE_CLASS}}storageClassName: ${STORAGE_CLASS}${{/STORAGE_CLASS}}
+
+# PersistentVolumeClaim for workspace
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: ${APPLICATION_NAME}-workspace-pvc
+    namespace: ${NAMESPACE}
+    labels:
+      app: ${APPLICATION_NAME}
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: ${WORKSPACE_STORAGE_SIZE}
+    ${{?STORAGE_CLASS}}storageClassName: ${STORAGE_CLASS}${{/STORAGE_CLASS}}
+
+# DeploymentConfig
+- apiVersion: apps.openshift.io/v1
+  kind: DeploymentConfig
+  metadata:
+    name: ${APPLICATION_NAME}
+    namespace: ${NAMESPACE}
+    labels:
+      app: ${APPLICATION_NAME}
+  spec:
+    replicas: 1
+    selector:
+      app: ${APPLICATION_NAME}
+      deploymentconfig: ${APPLICATION_NAME}
+    strategy:
+      type: Recreate
+      recreateParams:
+        timeoutSeconds: 600
+    template:
+      metadata:
+        labels:
+          app: ${APPLICATION_NAME}
+          deploymentconfig: ${APPLICATION_NAME}
+        annotations:
+          prometheus.io/scrape: "true"
+          prometheus.io/port: "18789"
+      spec:
+        securityContext:
+          runAsUser: 1000
+          fsGroup: 1000
+
+        initContainers:
+        - name: init-config
+          image: busybox:latest
+          command:
+          - sh
+          - -c
+          - |
+            if [ ! -f /home/node/.openclaw/openclaw.json ]; then
+              cp /config/openclaw.json /home/node/.openclaw/openclaw.json
+              chmod 644 /home/node/.openclaw/openclaw.json
+            fi
+          volumeMounts:
+          - name: config-volume
+            mountPath: /home/node/.openclaw
+          - name: config-template
+            mountPath: /config
+          securityContext:
+            runAsUser: 1000
+
+        containers:
+        - name: gateway
+          image: ${APPLICATION_NAME}:latest
+          imagePullPolicy: Always
+
+          command:
+          - node
+          - dist/index.js
+          - gateway
+          - --bind
+          - lan
+          - --port
+          - "18789"
+
+          ports:
+          - name: gateway
+            containerPort: 18789
+            protocol: TCP
+          - name: bridge
+            containerPort: 18790
+            protocol: TCP
+
+          env:
+          - name: HOME
+            value: /home/node
+          - name: TERM
+            value: xterm-256color
+          - name: NODE_ENV
+            value: production
+          - name: OPENCLAW_GATEWAY_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: ${APPLICATION_NAME}-secrets
+                key: OPENCLAW_GATEWAY_TOKEN
+          - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            valueFrom:
+              secretKeyRef:
+                name: ${APPLICATION_NAME}-secrets
+                key: OTEL_EXPORTER_OTLP_ENDPOINT
+                optional: true
+          - name: MLFLOW_TRACKING_URI
+            valueFrom:
+              secretKeyRef:
+                name: ${APPLICATION_NAME}-secrets
+                key: MLFLOW_TRACKING_URI
+                optional: true
+          - name: LANGFUSE_HOST
+            valueFrom:
+              secretKeyRef:
+                name: ${APPLICATION_NAME}-secrets
+                key: LANGFUSE_HOST
+                optional: true
+          - name: LANGFUSE_PUBLIC_KEY
+            valueFrom:
+              secretKeyRef:
+                name: ${APPLICATION_NAME}-secrets
+                key: LANGFUSE_PUBLIC_KEY
+                optional: true
+          - name: LANGFUSE_SECRET_KEY
+            valueFrom:
+              secretKeyRef:
+                name: ${APPLICATION_NAME}-secrets
+                key: LANGFUSE_SECRET_KEY
+                optional: true
+          - name: OTEL_SERVICE_NAME
+            value: openclaw
+
+          resources:
+            requests:
+              memory: ${MEMORY_REQUEST}
+              cpu: ${CPU_REQUEST}
+            limits:
+              memory: ${MEMORY_LIMIT}
+              cpu: ${CPU_LIMIT}
+
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 18789
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 18789
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+
+          volumeMounts:
+          - name: config-volume
+            mountPath: /home/node/.openclaw
+          - name: workspace-volume
+            mountPath: /home/node/.openclaw/workspace
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+              - ALL
+
+        volumes:
+        - name: config-template
+          configMap:
+            name: ${APPLICATION_NAME}-config
+        - name: config-volume
+          persistentVolumeClaim:
+            claimName: ${APPLICATION_NAME}-config-pvc
+        - name: workspace-volume
+          persistentVolumeClaim:
+            claimName: ${APPLICATION_NAME}-workspace-pvc
+
+    triggers:
+    - type: ConfigChange
+    - type: ImageChange
+      imageChangeParams:
+        automatic: true
+        containerNames:
+        - gateway
+        from:
+          kind: ImageStreamTag
+          name: ${APPLICATION_NAME}:latest
+
+# Service
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: ${APPLICATION_NAME}
+    namespace: ${NAMESPACE}
+    labels:
+      app: ${APPLICATION_NAME}
+  spec:
+    type: ClusterIP
+    selector:
+      app: ${APPLICATION_NAME}
+      deploymentconfig: ${APPLICATION_NAME}
+    ports:
+    - name: gateway
+      port: 18789
+      targetPort: 18789
+      protocol: TCP
+    - name: bridge
+      port: 18790
+      targetPort: 18790
+      protocol: TCP
+
+# Route for external access
+- apiVersion: route.openshift.io/v1
+  kind: Route
+  metadata:
+    name: ${APPLICATION_NAME}
+    namespace: ${NAMESPACE}
+    labels:
+      app: ${APPLICATION_NAME}
+    annotations:
+      haproxy.router.openshift.io/timeout: 30m
+  spec:
+    host: ${GATEWAY_HOSTNAME}
+    to:
+      kind: Service
+      name: ${APPLICATION_NAME}
+      weight: 100
+    port:
+      targetPort: gateway
+    tls:
+      termination: edge
+      insecureEdgeTerminationPolicy: Redirect
+    wildcardPolicy: None

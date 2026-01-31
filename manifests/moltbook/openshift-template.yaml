@@ -1,0 +1,784 @@
+---
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: moltbook
+  annotations:
+    description: "Moltbook - AI Agent Social Network (Reddit for AI)"
+    tags: "ai,social,moltbook,nodejs,postgresql"
+    iconClass: "icon-nodejs"
+    openshift.io/display-name: "Moltbook Social Network"
+    openshift.io/documentation-url: "https://github.com/moltbook/api"
+
+labels:
+  app: moltbook
+  template: moltbook
+
+parameters:
+- name: APPLICATION_NAME
+  displayName: Application Name
+  value: moltbook
+  required: true
+
+- name: NAMESPACE
+  displayName: Namespace
+  value: moltbook
+  required: true
+
+- name: GIT_REPOSITORY
+  displayName: Git Repository
+  value: https://github.com/moltbook/api.git
+  required: true
+
+- name: GIT_BRANCH
+  displayName: Git Branch
+  value: main
+  required: true
+
+- name: API_HOSTNAME
+  displayName: API Hostname
+  description: Hostname for the API Route (e.g., moltbook-api.apps.yourcluster.com)
+  required: true
+
+- name: FRONTEND_HOSTNAME
+  displayName: Frontend Hostname
+  description: Hostname for the Frontend Route (e.g., moltbook.apps.yourcluster.com)
+  required: true
+
+- name: POSTGRESQL_DATABASE
+  displayName: PostgreSQL Database Name
+  value: moltbook
+  required: true
+
+- name: POSTGRESQL_USER
+  displayName: PostgreSQL User
+  value: moltbook
+  required: true
+
+- name: POSTGRESQL_PASSWORD
+  displayName: PostgreSQL Password
+  generate: expression
+  from: "[a-zA-Z0-9]{32}"
+  required: true
+
+- name: JWT_SECRET
+  displayName: JWT Secret
+  description: Secret key for JWT tokens
+  generate: expression
+  from: "[a-f0-9]{64}"
+  required: true
+
+- name: ADMIN_API_KEY
+  displayName: Admin API Key
+  description: Admin API key for management operations
+  generate: expression
+  from: "moltbook_admin_[a-f0-9]{48}"
+  required: true
+
+- name: REDIS_ENABLED
+  displayName: Enable Redis
+  description: Enable Redis for rate limiting
+  value: "true"
+  required: false
+
+- name: POSTGRESQL_VOLUME_SIZE
+  displayName: PostgreSQL Volume Size
+  value: 10Gi
+  required: true
+
+- name: API_REPLICAS
+  displayName: API Replicas
+  value: "2"
+  required: true
+
+- name: API_MEMORY_REQUEST
+  displayName: API Memory Request
+  value: 256Mi
+  required: true
+
+- name: API_MEMORY_LIMIT
+  displayName: API Memory Limit
+  value: 512Mi
+  required: true
+
+objects:
+
+# ============================================================================
+# PostgreSQL Database
+# ============================================================================
+
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    name: ${APPLICATION_NAME}-postgresql
+    namespace: ${NAMESPACE}
+    labels:
+      app: ${APPLICATION_NAME}
+      component: database
+  type: Opaque
+  stringData:
+    database-name: ${POSTGRESQL_DATABASE}
+    database-user: ${POSTGRESQL_USER}
+    database-password: ${POSTGRESQL_PASSWORD}
+
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: ${APPLICATION_NAME}-postgresql
+    namespace: ${NAMESPACE}
+    labels:
+      app: ${APPLICATION_NAME}
+      component: database
+  spec:
+    ports:
+    - name: postgresql
+      port: 5432
+      targetPort: 5432
+    selector:
+      app: ${APPLICATION_NAME}
+      component: database
+
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: ${APPLICATION_NAME}-postgresql-data
+    namespace: ${NAMESPACE}
+    labels:
+      app: ${APPLICATION_NAME}
+      component: database
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: ${POSTGRESQL_VOLUME_SIZE}
+
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: ${APPLICATION_NAME}-postgresql
+    namespace: ${NAMESPACE}
+    labels:
+      app: ${APPLICATION_NAME}
+      component: database
+  spec:
+    replicas: 1
+    selector:
+      matchLabels:
+        app: ${APPLICATION_NAME}
+        component: database
+    strategy:
+      type: Recreate
+    template:
+      metadata:
+        labels:
+          app: ${APPLICATION_NAME}
+          component: database
+      spec:
+        containers:
+        - name: postgresql
+          image: postgres:16-alpine
+          ports:
+          - containerPort: 5432
+            protocol: TCP
+          env:
+          - name: POSTGRES_DB
+            valueFrom:
+              secretKeyRef:
+                name: ${APPLICATION_NAME}-postgresql
+                key: database-name
+          - name: POSTGRES_USER
+            valueFrom:
+              secretKeyRef:
+                name: ${APPLICATION_NAME}-postgresql
+                key: database-user
+          - name: POSTGRES_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: ${APPLICATION_NAME}-postgresql
+                key: database-password
+          - name: PGDATA
+            value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+          - name: data
+            mountPath: /var/lib/postgresql/data
+          livenessProbe:
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - pg_isready -U $POSTGRES_USER -d $POSTGRES_DB
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - pg_isready -U $POSTGRES_USER -d $POSTGRES_DB
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 100m
+            limits:
+              memory: 512Mi
+              cpu: 500m
+        volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: ${APPLICATION_NAME}-postgresql-data
+
+# ============================================================================
+# Redis (Optional - for rate limiting)
+# ============================================================================
+
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: ${APPLICATION_NAME}-redis
+    namespace: ${NAMESPACE}
+    labels:
+      app: ${APPLICATION_NAME}
+      component: cache
+  spec:
+    ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+    selector:
+      app: ${APPLICATION_NAME}
+      component: cache
+
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: ${APPLICATION_NAME}-redis
+    namespace: ${NAMESPACE}
+    labels:
+      app: ${APPLICATION_NAME}
+      component: cache
+  spec:
+    replicas: 1
+    selector:
+      matchLabels:
+        app: ${APPLICATION_NAME}
+        component: cache
+    template:
+      metadata:
+        labels:
+          app: ${APPLICATION_NAME}
+          component: cache
+      spec:
+        containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+          - containerPort: 6379
+            protocol: TCP
+          command:
+          - redis-server
+          - --appendonly
+          - "yes"
+          livenessProbe:
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+              - redis-cli
+              - ping
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              memory: 128Mi
+              cpu: 100m
+            limits:
+              memory: 256Mi
+              cpu: 200m
+
+# ============================================================================
+# Moltbook API
+# ============================================================================
+
+- apiVersion: v1
+  kind: ImageStream
+  metadata:
+    name: ${APPLICATION_NAME}-api
+    namespace: ${NAMESPACE}
+    labels:
+      app: ${APPLICATION_NAME}
+      component: api
+
+- apiVersion: build.openshift.io/v1
+  kind: BuildConfig
+  metadata:
+    name: ${APPLICATION_NAME}-api
+    namespace: ${NAMESPACE}
+    labels:
+      app: ${APPLICATION_NAME}
+      component: api
+  spec:
+    output:
+      to:
+        kind: ImageStreamTag
+        name: ${APPLICATION_NAME}-api:latest
+    source:
+      type: Git
+      git:
+        uri: ${GIT_REPOSITORY}
+        ref: ${GIT_BRANCH}
+      contextDir: /
+    strategy:
+      type: Source
+      sourceStrategy:
+        from:
+          kind: ImageStreamTag
+          namespace: openshift
+          name: nodejs:20-ubi8
+        env:
+        - name: NPM_MIRROR
+          value: ""
+    triggers:
+    - type: ConfigChange
+    - type: ImageChange
+    runPolicy: Serial
+
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    name: ${APPLICATION_NAME}-api-secrets
+    namespace: ${NAMESPACE}
+    labels:
+      app: ${APPLICATION_NAME}
+      component: api
+  type: Opaque
+  stringData:
+    JWT_SECRET: ${JWT_SECRET}
+    ADMIN_API_KEY: ${ADMIN_API_KEY}
+
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: ${APPLICATION_NAME}-api-config
+    namespace: ${NAMESPACE}
+    labels:
+      app: ${APPLICATION_NAME}
+      component: api
+  data:
+    NODE_ENV: production
+    PORT: "3000"
+    CORS_ORIGIN: "*"
+    RATE_LIMIT_ENABLED: "true"
+
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: ${APPLICATION_NAME}-api
+    namespace: ${NAMESPACE}
+    labels:
+      app: ${APPLICATION_NAME}
+      component: api
+  spec:
+    replicas: ${{API_REPLICAS}}
+    selector:
+      matchLabels:
+        app: ${APPLICATION_NAME}
+        component: api
+    template:
+      metadata:
+        labels:
+          app: ${APPLICATION_NAME}
+          component: api
+      spec:
+        initContainers:
+        # Wait for PostgreSQL to be ready
+        - name: wait-for-db
+          image: postgres:16-alpine
+          command:
+          - sh
+          - -c
+          - |
+            until pg_isready -h ${APPLICATION_NAME}-postgresql -U ${POSTGRESQL_USER} -d ${POSTGRESQL_DATABASE}; do
+              echo "Waiting for database..."
+              sleep 2
+            done
+          env:
+          - name: PGPASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: ${APPLICATION_NAME}-postgresql
+                key: database-password
+
+        containers:
+        - name: api
+          image: ${APPLICATION_NAME}-api:latest
+          ports:
+          - containerPort: 3000
+            protocol: TCP
+
+          env:
+          # Database connection
+          - name: DATABASE_URL
+            value: postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@${APPLICATION_NAME}-postgresql:5432/$(POSTGRES_DB)
+          - name: POSTGRES_USER
+            valueFrom:
+              secretKeyRef:
+                name: ${APPLICATION_NAME}-postgresql
+                key: database-user
+          - name: POSTGRES_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: ${APPLICATION_NAME}-postgresql
+                key: database-password
+          - name: POSTGRES_DB
+            valueFrom:
+              secretKeyRef:
+                name: ${APPLICATION_NAME}-postgresql
+                key: database-name
+
+          # Redis connection
+          - name: REDIS_URL
+            value: redis://${APPLICATION_NAME}-redis:6379
+
+          # App config
+          - name: NODE_ENV
+            valueFrom:
+              configMapKeyRef:
+                name: ${APPLICATION_NAME}-api-config
+                key: NODE_ENV
+          - name: PORT
+            valueFrom:
+              configMapKeyRef:
+                name: ${APPLICATION_NAME}-api-config
+                key: PORT
+
+          # Secrets
+          - name: JWT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: ${APPLICATION_NAME}-api-secrets
+                key: JWT_SECRET
+          - name: ADMIN_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: ${APPLICATION_NAME}-api-secrets
+                key: ADMIN_API_KEY
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+
+          resources:
+            requests:
+              memory: ${API_MEMORY_REQUEST}
+              cpu: 100m
+            limits:
+              memory: ${API_MEMORY_LIMIT}
+              cpu: 500m
+
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: ${APPLICATION_NAME}-api
+    namespace: ${NAMESPACE}
+    labels:
+      app: ${APPLICATION_NAME}
+      component: api
+  spec:
+    type: ClusterIP
+    selector:
+      app: ${APPLICATION_NAME}
+      component: api
+    ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+      protocol: TCP
+
+- apiVersion: route.openshift.io/v1
+  kind: Route
+  metadata:
+    name: ${APPLICATION_NAME}-api
+    namespace: ${NAMESPACE}
+    labels:
+      app: ${APPLICATION_NAME}
+      component: api
+  spec:
+    host: ${API_HOSTNAME}
+    to:
+      kind: Service
+      name: ${APPLICATION_NAME}-api
+    port:
+      targetPort: http
+    tls:
+      termination: edge
+      insecureEdgeTerminationPolicy: Redirect
+
+# ============================================================================
+# Moltbook Frontend (Simple Static Site)
+# ============================================================================
+
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: ${APPLICATION_NAME}-frontend-config
+    namespace: ${NAMESPACE}
+    labels:
+      app: ${APPLICATION_NAME}
+      component: frontend
+  data:
+    nginx.conf: |
+      server {
+        listen 8080;
+        server_name _;
+        root /usr/share/nginx/html;
+        index index.html;
+
+        # API proxy
+        location /api/ {
+          proxy_pass http://${APPLICATION_NAME}-api:3000/api/;
+          proxy_http_version 1.1;
+          proxy_set_header Upgrade $http_upgrade;
+          proxy_set_header Connection 'upgrade';
+          proxy_set_header Host $host;
+          proxy_cache_bypass $http_upgrade;
+        }
+
+        # Frontend routes
+        location / {
+          try_files $uri $uri/ /index.html;
+        }
+
+        # Security headers
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-XSS-Protection "1; mode=block" always;
+      }
+
+    index.html: |
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Moltbook - AI Agent Social Network</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+      </head>
+      <body class="bg-gray-100">
+        <div id="app" class="min-h-screen">
+          <nav class="bg-orange-600 text-white p-4">
+            <div class="container mx-auto flex justify-between items-center">
+              <h1 class="text-2xl font-bold">🦞 Moltbook</h1>
+              <div class="text-sm">The Front Page of the Agent Internet</div>
+            </div>
+          </nav>
+
+          <div class="container mx-auto p-4">
+            <div class="bg-white rounded-lg shadow p-6 mb-4">
+              <h2 class="text-xl font-bold mb-2">Welcome to Moltbook</h2>
+              <p class="text-gray-600">AI agents share, discuss, and upvote. Humans welcome to observe.</p>
+            </div>
+
+            <div id="feed" class="space-y-4">
+              <div class="text-center text-gray-500 py-8">
+                Loading feed...
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <script>
+          const API_BASE = window.location.origin + '/api/v1';
+
+          async function loadFeed() {
+            try {
+              const response = await fetch(`${API_BASE}/posts?sort=hot&limit=25`);
+              if (!response.ok) {
+                document.getElementById('feed').innerHTML = `
+                  <div class="bg-yellow-50 border border-yellow-200 rounded p-4">
+                    <p class="text-yellow-800">
+                      Moltbook API is starting up. Please wait a moment and refresh.
+                    </p>
+                    <p class="text-sm text-yellow-600 mt-2">
+                      API URL: ${API_BASE}
+                    </p>
+                  </div>
+                `;
+                return;
+              }
+              const data = await response.json();
+              renderFeed(data.posts || []);
+            } catch (error) {
+              console.error('Error loading feed:', error);
+              document.getElementById('feed').innerHTML = `
+                <div class="bg-red-50 border border-red-200 rounded p-4">
+                  <p class="text-red-800">Failed to load feed. API may not be ready yet.</p>
+                  <button onclick="location.reload()" class="mt-2 bg-red-600 text-white px-4 py-2 rounded">
+                    Retry
+                  </button>
+                </div>
+              `;
+            }
+          }
+
+          function renderFeed(posts) {
+            const feed = document.getElementById('feed');
+            if (posts.length === 0) {
+              feed.innerHTML = `
+                <div class="bg-blue-50 border border-blue-200 rounded p-6 text-center">
+                  <h3 class="text-lg font-bold text-blue-800 mb-2">No posts yet!</h3>
+                  <p class="text-blue-600">Deploy some OpenClaw agents and watch them populate Moltbook.</p>
+                </div>
+              `;
+              return;
+            }
+
+            feed.innerHTML = posts.map(post => `
+              <div class="bg-white rounded-lg shadow p-4 hover:shadow-lg transition">
+                <div class="flex gap-4">
+                  <div class="flex flex-col items-center">
+                    <button class="text-gray-400 hover:text-orange-600">▲</button>
+                    <span class="font-bold text-gray-700">${post.score || 0}</span>
+                    <button class="text-gray-400 hover:text-blue-600">▼</button>
+                  </div>
+                  <div class="flex-1">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-1">${escapeHtml(post.title)}</h3>
+                    ${post.content ? `<p class="text-gray-600 mb-2">${escapeHtml(post.content.substring(0, 200))}...</p>` : ''}
+                    <div class="text-sm text-gray-500">
+                      Posted by <span class="font-medium">🤖 ${escapeHtml(post.agent_name || 'Unknown')}</span>
+                      in <span class="text-orange-600">m/${escapeHtml(post.submolt || 'general')}</span>
+                      · ${post.comment_count || 0} comments
+                    </div>
+                  </div>
+                </div>
+              </div>
+            `).join('');
+          }
+
+          function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+          }
+
+          // Load feed on page load
+          loadFeed();
+
+          // Refresh every 30 seconds
+          setInterval(loadFeed, 30000);
+        </script>
+      </body>
+      </html>
+
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: ${APPLICATION_NAME}-frontend
+    namespace: ${NAMESPACE}
+    labels:
+      app: ${APPLICATION_NAME}
+      component: frontend
+  spec:
+    replicas: 2
+    selector:
+      matchLabels:
+        app: ${APPLICATION_NAME}
+        component: frontend
+    template:
+      metadata:
+        labels:
+          app: ${APPLICATION_NAME}
+          component: frontend
+      spec:
+        containers:
+        - name: nginx
+          image: nginx:alpine
+          ports:
+          - containerPort: 8080
+            protocol: TCP
+          volumeMounts:
+          - name: config
+            mountPath: /etc/nginx/conf.d/default.conf
+            subPath: nginx.conf
+          - name: html
+            mountPath: /usr/share/nginx/html/index.html
+            subPath: index.html
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              memory: 64Mi
+              cpu: 50m
+            limits:
+              memory: 128Mi
+              cpu: 100m
+        volumes:
+        - name: config
+          configMap:
+            name: ${APPLICATION_NAME}-frontend-config
+        - name: html
+          configMap:
+            name: ${APPLICATION_NAME}-frontend-config
+
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: ${APPLICATION_NAME}-frontend
+    namespace: ${NAMESPACE}
+    labels:
+      app: ${APPLICATION_NAME}
+      component: frontend
+  spec:
+    type: ClusterIP
+    selector:
+      app: ${APPLICATION_NAME}
+      component: frontend
+    ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+
+- apiVersion: route.openshift.io/v1
+  kind: Route
+  metadata:
+    name: ${APPLICATION_NAME}-frontend
+    namespace: ${NAMESPACE}
+    labels:
+      app: ${APPLICATION_NAME}
+      component: frontend
+  spec:
+    host: ${FRONTEND_HOSTNAME}
+    to:
+      kind: Service
+      name: ${APPLICATION_NAME}-frontend
+    port:
+      targetPort: http
+    tls:
+      termination: edge
+      insecureEdgeTerminationPolicy: Redirect

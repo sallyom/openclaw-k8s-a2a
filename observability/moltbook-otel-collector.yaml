@@ -1,0 +1,114 @@
+---
+# OpenTelemetryCollector for moltbook namespace
+# Receives telemetry from Moltbook API and forwards to central collector
+apiVersion: opentelemetry.io/v1alpha1
+kind: OpenTelemetryCollector
+metadata:
+  name: otel-collector
+  namespace: moltbook
+spec:
+  mode: deployment
+  replicas: 1
+
+  config: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+            cors:
+              allowed_origins:
+                - "*"
+
+    processors:
+      # Batch processor for better performance
+      batch:
+        timeout: 10s
+        send_batch_size: 1024
+
+      # Memory limiter to prevent OOM
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: 512
+        spike_limit_mib: 128
+
+      # Resource processor to add namespace info
+      resource:
+        attributes:
+          - key: service.namespace
+            value: moltbook
+            action: upsert
+          - key: k8s.namespace.name
+            value: moltbook
+            action: upsert
+
+      # Attributes processor for enrichment
+      attributes:
+        actions:
+          - key: deployment.environment
+            value: production
+            action: upsert
+
+    exporters:
+      # Forward to central collector in observability-hub
+      otlp:
+        endpoint: http://otel-collector.observability-hub.svc.cluster.local:4318
+        tls:
+          insecure: true
+
+      # Debug logging (set to info or debug as needed)
+      logging:
+        loglevel: info
+
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, resource, attributes, batch]
+          exporters: [otlp, logging]
+
+        metrics:
+          receivers: [otlp]
+          processors: [memory_limiter, resource, attributes, batch]
+          exporters: [otlp, logging]
+
+        logs:
+          receivers: [otlp]
+          processors: [memory_limiter, resource, attributes, batch]
+          exporters: [otlp, logging]
+
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 200m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+
+---
+# Service for the OpenTelemetry Collector
+# This is created automatically by the operator, but we can customize it if needed
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  namespace: moltbook
+  labels:
+    app.kubernetes.io/name: otel-collector
+    app.kubernetes.io/component: opentelemetry
+spec:
+  type: ClusterIP
+  ports:
+  - name: otlp-grpc
+    port: 4317
+    targetPort: 4317
+    protocol: TCP
+  - name: otlp-http
+    port: 4318
+    targetPort: 4318
+    protocol: TCP
+  selector:
+    app.kubernetes.io/name: moltbook-otel-collector
+    app.kubernetes.io/component: opentelemetry-collector

@@ -1,0 +1,238 @@
+---
+# OpenTelemetry Collector configuration for OpenClaw
+# This collector receives telemetry from OpenClaw and forwards to:
+# - Your OpenTelemetry backend
+# - MLFlow (via custom exporter/processor)
+# - Langfuse (via custom exporter)
+# - Prometheus (for metrics scraping)
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+  namespace: openclaw
+data:
+  otel-collector-config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+            cors:
+              allowed_origins:
+                - "*"
+
+      # Prometheus receiver for scraping OpenClaw metrics endpoint
+      prometheus:
+        config:
+          scrape_configs:
+            - job_name: 'openclaw'
+              scrape_interval: 15s
+              static_configs:
+                - targets: ['openclaw-gateway:18789']
+
+    processors:
+      # Batch processor for better performance
+      batch:
+        timeout: 10s
+        send_batch_size: 1024
+
+      # Resource processor to add cluster info
+      resource:
+        attributes:
+          - key: cluster.name
+            value: ${CLUSTER_NAME}
+            action: upsert
+          - key: deployment.environment
+            value: ${ENVIRONMENT}
+            action: upsert
+
+      # Memory limiter to prevent OOM
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: 512
+        spike_limit_mib: 128
+
+      # Attributes processor for enrichment
+      attributes:
+        actions:
+          - key: openclaw.version
+            value: ${OPENCLAW_VERSION}
+            action: upsert
+
+    exporters:
+      # OTLP exporter - send to your main observability backend
+      otlp:
+        endpoint: ${OTLP_BACKEND_ENDPOINT}
+        tls:
+          insecure: ${OTLP_INSECURE}
+        headers:
+          x-api-key: ${OTLP_API_KEY}
+
+      # Prometheus exporter for metrics
+      prometheus:
+        endpoint: "0.0.0.0:8889"
+        namespace: openclaw
+        const_labels:
+          service: openclaw
+
+      # Logging exporter for debugging
+      logging:
+        loglevel: ${OTEL_LOG_LEVEL}
+
+      # File exporter for MLFlow integration
+      # These files can be picked up by a sidecar that sends to MLFlow
+      file/metrics:
+        path: /var/log/otel/metrics.jsonl
+        rotation:
+          max_megabytes: 100
+          max_days: 3
+          max_backups: 3
+
+      file/traces:
+        path: /var/log/otel/traces.jsonl
+        rotation:
+          max_megabytes: 100
+          max_days: 3
+          max_backups: 3
+
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+
+      pprof:
+        endpoint: 0.0.0.0:1777
+
+      zpages:
+        endpoint: 0.0.0.0:55679
+
+    service:
+      extensions: [health_check, pprof, zpages]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, resource, batch]
+          exporters: [otlp, logging, file/traces]
+
+        metrics:
+          receivers: [otlp, prometheus]
+          processors: [memory_limiter, resource, batch]
+          exporters: [otlp, prometheus, file/metrics]
+
+        logs:
+          receivers: [otlp]
+          processors: [memory_limiter, resource, batch]
+          exporters: [otlp, logging]
+
+---
+# OTel Collector Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  namespace: openclaw
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: otel-collector
+  template:
+    metadata:
+      labels:
+        app: otel-collector
+    spec:
+      containers:
+      - name: otel-collector
+        image: otel/opentelemetry-collector-contrib:latest
+        args:
+          - --config=/conf/otel-collector-config.yaml
+        ports:
+        - containerPort: 4317  # OTLP gRPC
+          name: otlp-grpc
+        - containerPort: 4318  # OTLP HTTP
+          name: otlp-http
+        - containerPort: 8889  # Prometheus metrics
+          name: prometheus
+        - containerPort: 13133 # Health check
+          name: health
+        - containerPort: 55679 # zpages
+          name: zpages
+
+        env:
+        - name: CLUSTER_NAME
+          value: "your-cluster"
+        - name: ENVIRONMENT
+          value: "production"
+        - name: OPENCLAW_VERSION
+          value: "latest"
+        - name: OTLP_BACKEND_ENDPOINT
+          value: "otlp-backend:4317"  # Your OTLP backend
+        - name: OTLP_INSECURE
+          value: "false"
+        - name: OTLP_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: otel-secrets
+              key: api-key
+        - name: OTEL_LOG_LEVEL
+          value: "info"
+
+        volumeMounts:
+        - name: config
+          mountPath: /conf
+        - name: logs
+          mountPath: /var/log/otel
+
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 13133
+          initialDelaySeconds: 10
+
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 13133
+          initialDelaySeconds: 5
+
+        resources:
+          requests:
+            memory: 256Mi
+            cpu: 200m
+          limits:
+            memory: 512Mi
+            cpu: 500m
+
+      volumes:
+      - name: config
+        configMap:
+          name: otel-collector-config
+      - name: logs
+        emptyDir: {}
+
+---
+# OTel Collector Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  namespace: openclaw
+spec:
+  type: ClusterIP
+  selector:
+    app: otel-collector
+  ports:
+  - name: otlp-grpc
+    port: 4317
+    targetPort: 4317
+  - name: otlp-http
+    port: 4318
+    targetPort: 4318
+  - name: prometheus
+    port: 8889
+    targetPort: 8889
+  - name: health
+    port: 13133
+    targetPort: 13133
