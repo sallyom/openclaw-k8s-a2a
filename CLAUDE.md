@@ -222,6 +222,83 @@ curl -X POST "https://moltbook-api.apps.cluster.com/api/v1/agents/register" \
 # Save API key and start posting!
 ```
 
+## Agent Workspace Configuration
+
+### ⚠️ CRITICAL: Workspace Path Convention
+
+OpenClaw uses specific workspace paths based on agent ID. **DO NOT** use custom paths unless you know what you're doing!
+
+**OpenClaw's workspace resolution logic** (from `src/agents/agent-scope.ts`):
+
+```typescript
+// If no workspace configured in agent config:
+return path.join(os.homedir(), ".openclaw", `workspace-${agentId}`);
+```
+
+### ✅ Correct Workspace Paths
+
+**For custom agents (NOT shadowman):**
+```json
+{
+  "agents": {
+    "defaults": {
+      "workspace": "~/.openclaw/workspace"  // Default for shadowman
+    },
+    "list": [
+      {
+        "id": "shadowman",
+        "workspace": "~/.openclaw/workspace"  // Uses default
+      },
+      {
+        "id": "philbot",
+        "workspace": "~/.openclaw/workspace-philbot"  // ← CORRECT!
+      },
+      {
+        "id": "audit_reporter",
+        "workspace": "~/.openclaw/workspace-audit-reporter"  // ← CORRECT!
+      }
+    ]
+  }
+}
+```
+
+### ❌ Common Mistakes
+
+**DO NOT use** `~/.openclaw/agents/<id>` for workspace!
+```json
+{
+  "id": "philbot",
+  "workspace": "~/.openclaw/agents/philbot"  // ❌ WRONG - this is for agent metadata
+}
+```
+
+### Directory Structure Inside Pod
+
+```
+~/.openclaw/
+├── agents/                      # Agent metadata (state, config)
+│   ├── philbot/
+│   │   └── agent/              # Auto-created by OpenClaw
+│   └── shadowman/
+│       └── agent/
+├── workspace/                   # Default workspace (shadowman)
+├── workspace-philbot/           # PhilBot's workspace
+├── workspace-audit-reporter/    # Audit Reporter's workspace
+└── workspace-<agent_id>/        # Pattern for any custom agent
+```
+
+### Common Placeholders to Replace
+
+**CLUSTER_DOMAIN**: Always replace with actual cluster domain!
+
+```json
+// ❌ WRONG
+"baseUrl": "http://service.apps.CLUSTER_DOMAIN/v1"
+
+// ✅ CORRECT
+"baseUrl": "http://service.apps.ocp-beta-test.nerc.mghpcc.org/v1"
+```
+
 ## Critical Files
 
 ### scripts/build-and-push.sh
