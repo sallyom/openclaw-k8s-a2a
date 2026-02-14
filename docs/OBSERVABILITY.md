@@ -22,12 +22,12 @@ The observability stack uses **sidecar-based OTEL collectors** that send traces 
 │                                         │                       │
 └─────────────────────────────────────────┼───────────────────────┘
                                           │
-                                          ▼ OTLP/HTTP (HTTPS)
+                                          ▼ OTLP/HTTP (in-cluster)
 ┌─────────────────────────────────────────────────────────────────┐
-│ MLflow Tracking Server (demo-mlflow-agent-tracing namespace)    │
+│ MLflow Tracking Server (mlflow namespace)                       │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
-│  Route: mlflow-route-mlflow.apps.CLUSTER_DOMAIN                │
+│  Service: mlflow-service.mlflow.svc.cluster.local:5000          │
 │  Endpoint: /v1/traces (OTLP standard path)                     │
 │                                                                 │
 │  Features:                                                      │
@@ -98,14 +98,14 @@ The same pattern applies to Moltbook pods in the `moltbook` namespace.
 
 **Auto-injected** by OpenTelemetry Operator based on pod annotation.
 
-**Configuration** (`observability/openclaw-otel-sidecar.yaml`):
+**Configuration** (`observability/openclaw-otel-sidecar.yaml.envsubst`):
 
 ```yaml
 apiVersion: opentelemetry.io/v1alpha1
 kind: OpenTelemetryCollector
 metadata:
   name: openclaw-sidecar
-  namespace: openclaw
+  namespace: ${OPENCLAW_NAMESPACE}
 spec:
   mode: sidecar
 
@@ -113,6 +113,8 @@ spec:
     receivers:
       otlp:
         protocols:
+          grpc:
+            endpoint: 127.0.0.1:4317
           http:
             endpoint: 127.0.0.1:4318
 
@@ -129,20 +131,21 @@ spec:
       resource:
         attributes:
           - key: service.namespace
-            value: openclaw
+            value: ${OPENCLAW_NAMESPACE}
             action: upsert
           - key: deployment.environment
             value: production
             action: upsert
 
     exporters:
+      # Uses in-cluster service URL to avoid DNS rebinding rejection on the external route
       otlphttp:
-        endpoint: https://mlflow-route-mlflow.apps.CLUSTER_DOMAIN
+        endpoint: http://mlflow-service.mlflow.svc.cluster.local:5000
         headers:
           x-mlflow-experiment-id: "4"
           x-mlflow-workspace: "openclaw"
         tls:
-          insecure: false
+          insecure: true
 
       debug:
         verbosity: detailed
@@ -156,10 +159,11 @@ spec:
 ```
 
 **Key points**:
-- Listens on `localhost:4318` (only accessible within pod)
+- Listens on `localhost:4317` (gRPC) and `localhost:4318` (HTTP), only accessible within pod
 - Batches traces for efficiency
 - Adds namespace and environment metadata
-- Sends to MLflow OTLP endpoint (path `/v1/traces` auto-appended)
+- Uses in-cluster service URL (`mlflow-service.mlflow.svc:5000`) — avoids DNS rebinding rejection from MLflow's `HostValidationMiddleware` when going through the external route
+- Path `/v1/traces` is auto-appended by the OTLP exporter
 - Custom headers for MLflow experiment/workspace routing
 
 ### 3. Moltbook API (moltbook namespace)
@@ -208,12 +212,12 @@ spec:
 
     exporters:
       otlphttp:
-        endpoint: https://mlflow-route-mlflow.apps.CLUSTER_DOMAIN
+        endpoint: http://mlflow-service.mlflow.svc.cluster.local:5000
         headers:
           x-mlflow-experiment-id: "4"
           x-mlflow-workspace: "moltbook"
         tls:
-          insecure: false
+          insecure: true
 
     service:
       pipelines:
@@ -228,12 +232,15 @@ spec:
 - Larger batch size (1024 vs 100)
 - Different MLflow workspace header
 
-### 4. MLflow Tracking Server
+### 4. MLflow Tracking Server (mlflow namespace)
 
 **OTLP Ingestion**:
-- Endpoint: `https://mlflow-route-mlflow.apps.CLUSTER_DOMAIN/v1/traces`
+- In-cluster: `http://mlflow-service.mlflow.svc.cluster.local:5000/v1/traces`
+- External route: `https://mlflow-route-mlflow.CLUSTER_DOMAIN` (for UI access only)
 - Accepts OTLP traces via HTTP/Protobuf
 - Automatically converts spans to MLflow traces
+
+> **Note:** Use the in-cluster service URL for trace export from sidecars. The external route triggers MLflow's `HostValidationMiddleware` (DNS rebinding protection, added in MLflow 3.5.0+), which rejects requests with unexpected `Host` headers. The in-cluster URL avoids this entirely.
 
 **MLflow UI Features**:
 - **Traces tab**: Browse all traces with filters
@@ -255,7 +262,7 @@ This repository includes three OTEL collector sidecar configurations:
 
 | Sidecar | Namespace | Purpose | Sampling | Batch Size | Exports To |
 |---------|-----------|---------|----------|------------|------------|
-| `openclaw-sidecar` | `openclaw` | OpenClaw agent traces | 100% | 100 | MLflow Experiment 4 |
+| `openclaw-sidecar` | `${OPENCLAW_NAMESPACE}` | OpenClaw agent traces | 100% | 100 | MLflow Experiment 4 |
 | `moltbook-sidecar` | `moltbook` | Moltbook API traces | 10% | 1024 | MLflow Experiment 4 |
 | `vllm-sidecar` | `demo-mlflow-agent-tracing` | vLLM inference traces (dual-export) | 100% | 100 | MLflow Experiments 2 & 4 |
 
@@ -270,60 +277,42 @@ This repository includes three OTEL collector sidecar configurations:
 
 2. **MLflow** with OTLP endpoint accessible
 
-3. **Network connectivity** from openclaw/moltbook namespaces to MLflow route
+3. **Network connectivity** from openclaw/moltbook namespaces to MLflow service (`mlflow-service.mlflow.svc.cluster.local:5000`)
 
 ### Deploy OTEL Collector Sidecars
 
-**Note:** If you used `./scripts/setup.sh`, patched versions are already created in `manifests-private/observability/`!
+**Note:** If you used `./scripts/setup.sh`, the `.envsubst` templates have already been processed and deployed.
 
 #### Option 1: Automated Deployment (Recommended)
 
-The setup script automatically creates and deploys sidecar configurations:
+The setup script automatically runs `envsubst` on sidecar templates and deploys them:
 
 ```bash
 ./scripts/setup.sh
-# Creates patched versions in manifests-private/observability/
-# - openclaw-otel-sidecar.yaml
-# - moltbook-otel-sidecar.yaml
-# - vllm-otel-sidecar.yaml
+# Generates from .envsubst templates:
+# - observability/openclaw-otel-sidecar.yaml
+# - observability/moltbook-otel-sidecar.yaml
+# - observability/vllm-otel-sidecar.yaml
 ```
 
 #### Option 2: Manual Deployment
 
-Deploy each sidecar configuration from the patched versions:
+Run `envsubst` on templates and deploy:
 
 ```bash
-# 1. Deploy OpenClaw sidecar (for openclaw namespace)
-oc apply -f manifests-private/observability/openclaw-otel-sidecar.yaml
+# Source the generated secrets
+source .env && set -a
 
-# 2. Deploy Moltbook sidecar (for moltbook namespace)
-oc apply -f manifests-private/observability/moltbook-otel-sidecar.yaml
-
-# 3. Deploy vLLM sidecar (for demo-mlflow-agent-tracing namespace)
-oc apply -f manifests-private/observability/vllm-otel-sidecar.yaml
-```
-
-#### Option 3: Create Patches Manually
-
-If you don't have `manifests-private/` created yet:
-
-```bash
-# Get your cluster domain
-CLUSTER_DOMAIN=$(oc get ingresses.config/cluster -o jsonpath='{.spec.domain}')
-
-# Create patched versions
-mkdir -p manifests-private/observability
-
-for file in openclaw-otel-sidecar.yaml moltbook-otel-sidecar.yaml vllm-otel-sidecar.yaml; do
-  sed "s/CLUSTER_DOMAIN/$CLUSTER_DOMAIN/g" \
-    observability/$file > \
-    manifests-private/observability/$file
+# Generate YAML from templates
+ENVSUBST_VARS='${CLUSTER_DOMAIN} ${OPENCLAW_NAMESPACE}'
+for tpl in observability/*.envsubst; do
+  envsubst "$ENVSUBST_VARS" < "$tpl" > "${tpl%.envsubst}"
 done
 
-# Deploy them
-oc apply -f manifests-private/observability/openclaw-otel-sidecar.yaml
-oc apply -f manifests-private/observability/moltbook-otel-sidecar.yaml
-oc apply -f manifests-private/observability/vllm-otel-sidecar.yaml
+# Deploy each sidecar configuration
+oc apply -f observability/openclaw-otel-sidecar.yaml
+oc apply -f observability/moltbook-otel-sidecar.yaml
+oc apply -f observability/vllm-otel-sidecar.yaml
 ```
 
 #### Verify Sidecar Configurations
@@ -351,7 +340,7 @@ Edit `manifests/openclaw/base/openclaw-deployment.yaml`:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: openclaw-gateway
+  name: openclaw
   namespace: openclaw
 spec:
   template:
@@ -367,8 +356,8 @@ spec:
 
 Then apply the change:
 ```bash
-oc apply -k manifests-private/openclaw/
-oc rollout restart deployment/openclaw-gateway -n openclaw
+oc apply -k manifests/openclaw/overlays/openshift/
+oc rollout restart deployment/openclaw -n openclaw
 ```
 
 #### Moltbook API Deployment
@@ -395,7 +384,7 @@ spec:
 
 Then apply the change:
 ```bash
-oc apply -k manifests-private/moltbook/
+oc apply -k manifests/moltbook/overlays/openshift/
 oc rollout restart deployment/moltbook-api -n moltbook
 ```
 
@@ -439,33 +428,34 @@ oc logs -n moltbook -l app=moltbook-api -c otc-container
 
 ### Update Cluster-Specific Values
 
-**Important:** The `observability/` directory contains templates with `CLUSTER_DOMAIN` placeholders.
+**Important:** The `observability/` directory contains `.envsubst` templates with `${OPENCLAW_NAMESPACE}` and `${CLUSTER_DOMAIN}` placeholders. The OpenClaw sidecar uses the in-cluster MLflow service URL (no cluster domain needed), but the vLLM sidecar still references `${CLUSTER_DOMAIN}` for the external route.
 
 **Automated (recommended):**
 ```bash
-# setup.sh automatically creates patched versions in manifests-private/
+# setup.sh runs envsubst on all templates automatically
 ./scripts/setup.sh
 ```
 
 **Manual:**
 ```bash
-# Get your cluster domain
-CLUSTER_DOMAIN=$(oc get ingresses.config/cluster -o jsonpath='{.spec.domain}')
+# Source .env for all variables
+source .env
 
-# Create patched version
-mkdir -p manifests-private/observability
-sed "s/CLUSTER_DOMAIN/$CLUSTER_DOMAIN/g" \
-  observability/vllm-otel-sidecar.yaml > \
-  manifests-private/observability/vllm-otel-sidecar.yaml
+# Generate YAML from templates
+for tpl in observability/*.envsubst; do
+  envsubst '${CLUSTER_DOMAIN} ${OPENCLAW_NAMESPACE}' < "$tpl" > "${tpl%.envsubst}"
+done
 
 # Then deploy
-oc apply -f manifests-private/observability/vllm-otel-sidecar.yaml
+oc apply -f observability/openclaw-otel-sidecar.yaml
+oc apply -f observability/moltbook-otel-sidecar.yaml
+oc apply -f observability/vllm-otel-sidecar.yaml
 ```
 
 ### Verify Traces in MLflow
 
-1. Access MLflow UI: `https://mlflow-route-mlflow.apps.YOUR_CLUSTER_DOMAIN`
-   - Get your cluster domain: `oc get ingresses.config/cluster -o jsonpath='{.spec.domain}'`
+1. Access MLflow UI via route: `https://mlflow-route-mlflow.apps.YOUR_CLUSTER_DOMAIN`
+   - Or port-forward: `oc port-forward svc/mlflow-service 5000:5000 -n mlflow`
 2. Navigate to **Traces** tab
 3. Filter by workspace: `openclaw` or `moltbook`
 4. Click a trace to see:
@@ -559,7 +549,8 @@ vLLM has built-in OpenTelemetry support. To enable trace context extraction:
 ```yaml
             env:
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
-              value: 'https://mlflow-route-mlflow.apps.YOUR_CLUSTER_DOMAIN/v1/traces'
+              # Use in-cluster URL (preferred) or external route
+              value: 'http://mlflow-service.mlflow.svc.cluster.local:5000/v1/traces'
             - name: OTEL_EXPORTER_OTLP_TRACES_HEADERS
               value: x-mlflow-experiment-id=2
             - name: OTEL_SERVICE_NAME
@@ -567,8 +558,6 @@ vLLM has built-in OpenTelemetry support. To enable trace context extraction:
             - name: OTEL_EXPORTER_OTLP_TRACES_PROTOCOL
               value: http/protobuf
 ```
-
-Replace `YOUR_CLUSTER_DOMAIN` with your actual cluster domain (e.g., `ocp-prod.example.com`).
 
 **vLLM startup** (if using direct MLflow export):
 ```bash
@@ -581,7 +570,7 @@ Replace `YOUR_CLUSTER_DOMAIN` with your actual cluster domain (e.g., `ocp-prod.e
               vllm serve openai/gpt-oss-20b \
                 --tool-call-parser openai \
                 --enable-auto-tool-choice \
-                --otlp-traces-endpoint https://mlflow-route-mlflow.apps.YOUR_CLUSTER_DOMAIN/v1/traces \
+                --otlp-traces-endpoint http://mlflow-service.mlflow.svc.cluster.local:5000/v1/traces \
                 --collect-detailed-traces all
 ```
 
@@ -652,19 +641,41 @@ Trace 1 (OpenClaw):
 
 2. Verify MLflow endpoint is reachable from the pod:
    ```bash
-   oc exec -n openclaw deployment/openclaw-gateway -c gateway -- \
-     curl -v https://mlflow-route-mlflow.apps.YOUR_CLUSTER_DOMAIN/v1/traces
+   oc exec -n $OPENCLAW_NAMESPACE deployment/openclaw -c gateway -- \
+     curl -sv http://mlflow-service.mlflow.svc.cluster.local:5000/v1/traces \
+     -X POST -H "Content-Type: application/x-protobuf" -d ""
    ```
+   Expected: HTTP 400 (bad request, empty body). If HTTP 403, see "DNS Rebinding / Host Header" section below.
 
-3. Check for TLS errors in sidecar logs:
+3. Check for export errors in sidecar logs:
    ```bash
-   oc logs -n openclaw -l app=openclaw -c otc-container | grep -i "tls\|certificate\|error"
+   oc logs -n $OPENCLAW_NAMESPACE -l app=openclaw -c otc-container | grep -i "error\|rejected\|403"
    ```
 
 4. Verify the MLflow experiment ID exists:
    - Open MLflow UI
    - Check that Experiment 4 exists
    - If not, create it in the MLflow UI
+
+### DNS Rebinding / Host Header Rejected (HTTP 403)
+
+**Problem:** Sidecar logs show `Permanent error: rpc error: code = PermissionDenied desc = ... 403`
+
+MLflow 3.5.0+ includes `HostValidationMiddleware` (`fastapi_security.py`) that rejects requests where the `Host` header doesn't match `--allowed-hosts`. When using in-cluster service URLs, the `Host` header includes the port (e.g., `mlflow-service.mlflow.svc.cluster.local:5000`) but `--allowed-hosts` may only list the hostname without port.
+
+**Solution:** Add port variants to MLflow's `--allowed-hosts`:
+```
+--allowed-hosts "localhost,localhost:5000,mlflow-service,mlflow-service:5000,mlflow-service.mlflow.svc.cluster.local,mlflow-service.mlflow.svc.cluster.local:5000"
+```
+
+**Verify in MLflow logs:**
+```bash
+# Check what hosts are allowed
+oc logs deployment/mlflow-deployment -n mlflow | grep "Allowed hosts"
+
+# Check for rejections
+oc logs deployment/mlflow-deployment -n mlflow | grep "Rejected request"
+```
 
 ### Sidecar Running Out of Memory
 

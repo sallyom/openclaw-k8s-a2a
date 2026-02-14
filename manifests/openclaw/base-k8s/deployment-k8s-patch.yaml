@@ -1,0 +1,25 @@
+# Strategic merge patch for OpenClaw Deployment (vanilla Kubernetes)
+# - Removes oauth-proxy sidecar container
+# - Removes oauth-config and proxy-tls volumes
+# - Changes serviceAccountName to default
+# - Changes init container image from ubi9-minimal to busybox
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openclaw
+  namespace: openclaw
+spec:
+  template:
+    spec:
+      serviceAccountName: default
+      initContainers:
+      - name: init-config
+        image: busybox:latest
+      containers:
+      - name: oauth-proxy
+        $patch: delete
+      volumes:
+      - name: oauth-config
+        $patch: delete
+      - name: proxy-tls
+        $patch: delete

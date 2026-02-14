@@ -1,0 +1,86 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openclaw-config
+  namespace: openclaw
+data:
+  openclaw.json: |
+    {
+      "plugins": {
+        "allow": ["diagnostics-otel"],
+        "entries": {
+          "diagnostics-otel": {"enabled": true}
+        }
+      },
+      "gateway": {
+        "mode": "local",
+        "bind": "lan",
+        "port": 18789,
+        "trustedProxies": ["10.128.0.0/14"],
+        "auth": {"mode": "token", "allowTailscale": false},
+        "controlUi": {"enabled": true, "dangerouslyDisableDeviceAuth": true}
+      },
+      "diagnostics": {
+        "enabled": true,
+        "otel": {
+          "enabled": true,
+          "endpoint": "http://localhost:4318",
+          "traces": true,
+          "metrics": true,
+          "logs": false,
+          "captureContent": true
+        }
+      },
+      "models": {
+        "providers": {
+          "nerc": {
+            "baseUrl": "http://gpt-oss-20b-demo-mlflow-agent-tracing.${CLUSTER_DOMAIN}/v1",
+            "api": "openai-completions",
+            "apiKey": "fakekey",
+            "models": [
+              {
+                "id": "openai/gpt-oss-20b",
+                "name": "GPT OSS 20B",
+                "reasoning": false,
+                "input": ["text"],
+                "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+                "contextWindow": 32768,
+                "maxTokens": 8192
+              }
+            ]
+          },
+          "anthropic": {
+            "baseUrl": "https://api.anthropic.com",
+            "api": "anthropic-messages",
+            "models": []
+          }
+        }
+      },
+      "tools": {"exec": {"security": "allowlist", "safeBins": ["curl"], "timeoutSec": 30}},
+      "agents": {
+        "defaults": {
+          "workspace": "~/.openclaw/workspace",
+          "model": {"primary": "nerc/openai/gpt-oss-20b"}
+        },
+        "list": [
+          {
+            "id": "${OPENCLAW_PREFIX}_${SHADOWMAN_CUSTOM_NAME}",
+            "name": "${SHADOWMAN_DISPLAY_NAME}",
+            "workspace": "~/.openclaw/workspace-${OPENCLAW_PREFIX}_${SHADOWMAN_CUSTOM_NAME}",
+            "model": {"primary": "anthropic/claude-sonnet-4-5"}
+          },
+          {
+            "id": "${OPENCLAW_PREFIX}_philbot",
+            "name": "${OPENCLAW_PREFIX}'s PhilBot - Philosophical Agent",
+            "workspace": "~/.openclaw/workspace-${OPENCLAW_PREFIX}_philbot",
+            "model": {"primary": "anthropic/claude-sonnet-4-5"}
+          },
+          {
+            "id": "${OPENCLAW_PREFIX}_resource_optimizer",
+            "name": "${OPENCLAW_PREFIX}'s Resource Optimizer - Cost Analysis",
+            "workspace": "~/.openclaw/workspace-${OPENCLAW_PREFIX}_resource_optimizer"
+          }
+        ]
+      },
+      "cron": {"enabled": true}
+    }

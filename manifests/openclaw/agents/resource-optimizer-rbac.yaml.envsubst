@@ -5,7 +5,7 @@
 # Security Model:
 # - Each agent gets its own ServiceAccount and token
 # - Token stored in agent's .env file
-# - Agent uses: oc --token=$OC_TOKEN get pods -n resource-demo
+# - Agent uses curl with $OC_TOKEN to query the K8s API
 # - Other agents in same pod don't get these permissions
 #
 # Principle of Least Privilege:
@@ -21,7 +21,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: resource-optimizer-sa
-  namespace: openclaw
+  namespace: ${OPENCLAW_NAMESPACE}
   labels:
     app: openclaw
     agent: resource-optimizer
@@ -35,7 +35,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: resource-optimizer-sa-token
-  namespace: openclaw
+  namespace: ${OPENCLAW_NAMESPACE}
   labels:
     app: openclaw
     agent: resource-optimizer
@@ -55,7 +55,7 @@ metadata:
     app: openclaw
     agent: resource-optimizer
 rules:
-# Read pods (for oc get pods -n resource-demo)
+# Read pods
 - apiGroups: [""]
   resources:
     - pods
@@ -63,7 +63,7 @@ rules:
     - get
     - list
 
-# Read PVCs (for oc get pvc -n resource-demo)
+# Read PVCs
 - apiGroups: [""]
   resources:
     - persistentvolumeclaims
@@ -71,7 +71,7 @@ rules:
     - get
     - list
 
-# Read deployments, statefulsets (for oc get deployments -n resource-demo)
+# Read deployments, statefulsets
 - apiGroups: ["apps"]
   resources:
     - deployments
@@ -81,8 +81,7 @@ rules:
     - get
     - list
 
-# Read resource metrics (for oc adm top pods -n resource-demo)
-# Requires metrics-server to be installed in the cluster
+# Read resource metrics (requires metrics-server)
 - apiGroups: ["metrics.k8s.io"]
   resources:
     - pods
@@ -103,7 +102,7 @@ metadata:
 subjects:
 - kind: ServiceAccount
   name: resource-optimizer-sa
-  namespace: openclaw
+  namespace: ${OPENCLAW_NAMESPACE}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role

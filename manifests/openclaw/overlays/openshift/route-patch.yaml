@@ -1,0 +1,8 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: openclaw
+  namespace: openclaw
+spec:
+  # Omit host to let OpenShift auto-generate: openclaw-<namespace>.apps.<cluster-domain>
+  host: ""

@@ -1,0 +1,6 @@
+# JSON 6902 patch for Moltbook Frontend Service (vanilla Kubernetes)
+# Removes oauth-ui port and serving-cert annotation added by OAuth patch
+- op: remove
+  path: /metadata/annotations/service.beta.openshift.io~1serving-cert-secret-name
+- op: remove
+  path: /spec/ports/0

@@ -15,7 +15,7 @@ data:
   #   Option 1 (recommended): Via OTEL collector sidecar for batching/routing
   #     diagnostics.otel.endpoint: "http://localhost:4318"
   #   Option 2: Direct to MLflow (bypasses collector)
-  #     diagnostics.otel.endpoint: "https://mlflow-route-mlflow.apps.CLUSTER_DOMAIN"
+  #     diagnostics.otel.endpoint: "http://mlflow-service.mlflow.svc.cluster.local:5000"
   openclaw.json: |
     {
       "plugins": {
@@ -47,13 +47,14 @@ data:
           "endpoint": "http://localhost:4318",
           "traces": true,
           "metrics": true,
-          "logs": false
+          "logs": false,
+          "captureContent": true
         }
       },
       "models": {
         "providers": {
           "nerc": {
-            "baseUrl": "http://gpt-oss-20b-demo-mlflow-agent-tracing.apps.CLUSTER_DOMAIN/v1",
+            "baseUrl": "http://gpt-oss-20b-demo-mlflow-agent-tracing.CLUSTER_DOMAIN/v1",
             "api": "openai-completions",
             "apiKey": "fakekey",
             "models": [
@@ -129,6 +130,9 @@ data:
           "watch": true,
           "watchDebounceMs": 1000
         }
+      },
+      "session": {
+        "store": "~/.openclaw/agents/{agentId}/sessions/sessions.json"
       },
       "cron": {
         "enabled": true

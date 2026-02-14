@@ -70,21 +70,21 @@ spec:
     exporters:
       # Export to MLflow Experiment 2 (teammate's testing)
       otlphttp/experiment2:
-        endpoint: https://mlflow-route-mlflow.apps.CLUSTER_DOMAIN
+        endpoint: http://mlflow-service.mlflow.svc.cluster.local:5000
         headers:
           x-mlflow-experiment-id: "2"
           x-mlflow-workspace: "vllm-testing"
         tls:
-          insecure: false
+          insecure: true
 
       # Export to MLflow Experiment 4 (OpenClaw distributed tracing)
       otlphttp/experiment4:
-        endpoint: https://mlflow-route-mlflow.apps.CLUSTER_DOMAIN
+        endpoint: http://mlflow-service.mlflow.svc.cluster.local:5000
         headers:
           x-mlflow-experiment-id: "4"
           x-mlflow-workspace: "openclaw"
         tls:
-          insecure: false
+          insecure: true
 
       # Debug exporter for troubleshooting
       debug:

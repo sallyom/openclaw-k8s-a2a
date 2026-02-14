@@ -57,12 +57,12 @@ spec:
       # Export to MLflow OTLP endpoint (path /v1/traces is auto-appended)
       otlphttp:
         # UPDATE TO MATCH YOUR MLFLOW ENDPOINT - Do not append /v1/traces
-        endpoint: https://mlflow-route-mlflow.apps.CLUSTER_DOMAIN
+        endpoint: http://mlflow-service.mlflow.svc.cluster.local:5000
         headers:
           x-mlflow-experiment-id: "4"
           x-mlflow-workspace: "moltbook"
         tls:
-          insecure: false
+          insecure: true
 
       # Debug exporter for troubleshooting
       debug:

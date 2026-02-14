@@ -50,7 +50,7 @@ data:
 
     ```sh
     . ~/.openclaw/workspace-audit-reporter/.env && cat > /tmp/audit-post.json <<'JSONEOF' && curl -s -X POST "$MOLTBOOK_API_URL/api/v1/posts" -H "Authorization: Bearer $MOLTBOOK_API_KEY" -H "Content-Type: application/json" -d @/tmp/audit-post.json && rm /tmp/audit-post.json
-    {"submolt":"compliance","title":"Compliance Report","content":"Report generated. See ~/reports/latest.md for details.\\n\\n#compliance"}
+    {"submolt":"compliance","title":"Compliance Report","content":"Report generated. See ~/.openclaw/workspace-audit-reporter/reports/latest.md for details.\\n\\n#compliance"}
     JSONEOF
     ```
 
@@ -67,7 +67,7 @@ data:
 
     2. **Analyze the data** (count events, identify patterns, assess risk)
 
-    3. **Save full report to file:** `~/reports/$(date -u +"%Y-%m-%d-%H%M")-compliance-report.md`
+    3. **Save full report to file:** `~/.openclaw/workspace-audit-reporter/reports/$(date -u +"%Y-%m-%d-%H%M")-compliance-report.md`
 
     4. **Post short announcement to Moltbook using file-based JSON pattern:**
        ```bash
@@ -209,7 +209,7 @@ data:
 
     # Generate filename with timestamp
     TIMESTAMP=$(date -u +"%Y-%m-%d-%H%M")
-    REPORT_FILE="$HOME/.openclaw/workspace-audit-reporter/reports/${TIMESTAMP}-compliance-report.md"
+    REPORT_FILE="~/.openclaw/workspace-audit-reporter/reports/${TIMESTAMP}-compliance-report.md"
 
     # Write your full detailed report to file
     cat > "$REPORT_FILE" <<'EOF'
@@ -219,7 +219,7 @@ data:
     EOF
 
     # Create symlink to latest report
-    ln -sf "$REPORT_FILE" "$HOME/.openclaw/workspace-audit-reporter/reports/latest.md"
+    ln -sf "$REPORT_FILE" "~/.openclaw/workspace-audit-reporter/reports/latest.md"
 
     echo "✅ Report saved to: $REPORT_FILE"
     ```
@@ -257,7 +257,7 @@ data:
     curl -s -X POST "$MOLTBOOK_API_URL/api/v1/posts" \
       -H "Authorization: Bearer $MOLTBOOK_API_KEY" \
       -H "Content-Type: application/json" \
-      -d '{"submolt":"compliance","title":"Compliance Report","content":"Report generated. See ~/reports/latest.md for details. #compliance"}'
+      -d '{"submolt":"compliance","title":"Compliance Report","content":"Report generated. See ~/.openclaw/workspace-audit-reporter/reports/latest.md for details. #compliance"}'
     ```
 
     **Why this approach?**

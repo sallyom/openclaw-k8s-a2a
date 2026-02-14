@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: moltbook
+resources:
+  - ../../base
+patches:
+  - path: secrets-patch.yaml
+  - path: route-patch.yaml
+  - path: api-patch.yaml
+    target:
+      kind: Deployment
+      name: moltbook-api

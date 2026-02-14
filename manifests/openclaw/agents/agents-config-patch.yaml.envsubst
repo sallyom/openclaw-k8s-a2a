@@ -10,12 +10,12 @@
 #   Option 1 (recommended): Via OTEL collector sidecar for batching/routing
 #     diagnostics.otel.endpoint: "http://localhost:4318"
 #   Option 2: Direct to MLflow (bypasses collector)
-#     diagnostics.otel.endpoint: "https://mlflow-route-mlflow.apps.CLUSTER_DOMAIN"
+#     diagnostics.otel.endpoint: "http://mlflow-service.mlflow.svc.cluster.local:5000"
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: openclaw-config
-  namespace: openclaw
+  namespace: ${OPENCLAW_NAMESPACE}
 data:
   openclaw.json: |
     {
@@ -48,13 +48,14 @@ data:
           "endpoint": "http://localhost:4318",
           "traces": true,
           "metrics": true,
-          "logs": false
+          "logs": false,
+          "captureContent": true
         }
       },
       "models": {
         "providers": {
           "nerc": {
-            "baseUrl": "http://gpt-oss-20b-demo-mlflow-agent-tracing.apps.CLUSTER_DOMAIN/v1",
+            "baseUrl": "http://gpt-oss-20b-demo-mlflow-agent-tracing.${CLUSTER_DOMAIN}/v1",
             "api": "openai-completions",
             "apiKey": "fakekey",
             "models": [
@@ -73,6 +74,11 @@ data:
                 "maxTokens": 8192
               }
             ]
+          },
+          "anthropic": {
+            "baseUrl": "https://api.anthropic.com",
+            "api": "anthropic-messages",
+            "models": []
           }
         }
       },
@@ -116,29 +122,21 @@ data:
         },
         "list": [
           {
-            "id": "shadowman",
-            "name": "Shadowman - Friendly AI Assistant",
-            "workspace": "~/.openclaw/workspace"
+            "id": "${OPENCLAW_PREFIX}_${SHADOWMAN_CUSTOM_NAME}",
+            "name": "${SHADOWMAN_DISPLAY_NAME}",
+            "workspace": "~/.openclaw/workspace-${OPENCLAW_PREFIX}_${SHADOWMAN_CUSTOM_NAME}",
+            "model": {"primary": "anthropic/claude-sonnet-4-5"}
           },
           {
-            "id": "audit_reporter",
-            "name": "Audit Reporter - Compliance & Admin",
-            "workspace": "~/.openclaw/workspace-audit-reporter"
+            "id": "${OPENCLAW_PREFIX}_philbot",
+            "name": "${OPENCLAW_PREFIX}'s PhilBot - Philosophical Agent",
+            "workspace": "~/.openclaw/workspace-${OPENCLAW_PREFIX}_philbot",
+            "model": {"primary": "anthropic/claude-sonnet-4-5"}
           },
           {
-            "id": "philbot",
-            "name": "PhilBot - The Philosophical Agent",
-            "workspace": "~/.openclaw/workspace-philbot"
-          },
-          {
-            "id": "resource_optimizer",
-            "name": "Resource Optimizer - Cost Analysis",
-            "workspace": "~/.openclaw/workspace-resource-optimizer"
-          },
-          {
-            "id": "mlops_monitor",
-            "name": "MLOps Monitor - ML Operations",
-            "workspace": "~/.openclaw/workspace-mlops-monitor"
+            "id": "${OPENCLAW_PREFIX}_resource_optimizer",
+            "name": "${OPENCLAW_PREFIX}'s Resource Optimizer - Cost Analysis",
+            "workspace": "~/.openclaw/workspace-${OPENCLAW_PREFIX}_resource_optimizer"
           }
         ]
       },
@@ -148,6 +146,9 @@ data:
           "watch": true,
           "watchDebounceMs": 1000
         }
+      },
+      "session": {
+        "store": "~/.openclaw/agents/{agentId}/sessions/sessions.json"
       },
       "cron": {
         "enabled": true

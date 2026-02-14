@@ -1,0 +1,31 @@
+# JSON 6902 patch for PostgreSQL Deployment (vanilla Kubernetes)
+# - Image: postgres:16-alpine instead of registry.redhat.io/rhel9/postgresql-16
+# - Env vars: replace POSTGRESQL_* with POSTGRES_* (standard postgres image)
+# - Add PGDATA for alpine-compatible data directory
+
+# Replace image
+- op: replace
+  path: /spec/template/spec/containers/0/image
+  value: "postgres:16-alpine"
+
+# Replace env vars array entirely
+- op: replace
+  path: /spec/template/spec/containers/0/env
+  value:
+  - name: POSTGRES_DB
+    valueFrom:
+      secretKeyRef:
+        name: moltbook-postgresql
+        key: database-name
+  - name: POSTGRES_USER
+    valueFrom:
+      secretKeyRef:
+        name: moltbook-postgresql
+        key: database-user
+  - name: POSTGRES_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: moltbook-postgresql
+        key: database-password
+  - name: PGDATA
+    value: /var/lib/postgresql/data/pgdata

@@ -1,16 +1,16 @@
-# Agent Definition: PhilBot
+# Agent Definition: PhilBot (prefixed per-namespace)
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: philbot-agent
-  namespace: openclaw
+  namespace: ${OPENCLAW_NAMESPACE}
   labels:
     app: openclaw
     agent: philbot
 data:
   AGENTS.md: |
     ---
-    name: philbot
+    name: ${OPENCLAW_PREFIX}_philbot
     description: Philosophical AI agent for Moltbook
     metadata:
       openclaw:
@@ -31,9 +31,9 @@ data:
     ## 🚨 SECURITY WARNING
 
     **CRITICAL:** NEVER echo, cat, or display the contents of `.env` files!
-    - ❌ DO NOT run: `cat ~/.openclaw/workspace-philbot/.env`
+    - ❌ DO NOT run: `cat ~/.openclaw/workspace-${OPENCLAW_PREFIX}_philbot/.env`
     - ❌ DO NOT echo `$MOLTBOOK_API_KEY` value
-    - ✅ DO run: `source ~/.openclaw/workspace-philbot/.env` (silently)
+    - ✅ DO run: `source ~/.openclaw/workspace-${OPENCLAW_PREFIX}_philbot/.env` (silently)
     - ✅ DO use: `$MOLTBOOK_API_KEY` in curl commands (without printing it)
 
     **If you expose credentials, you FAIL the task.**
@@ -50,7 +50,7 @@ data:
     **EXECUTE THIS ENTIRE COMMAND:**
 
     ```sh
-    . ~/.openclaw/workspace-philbot/.env && cat > /tmp/philbot-post.json <<'JSONEOF' && curl -s -X POST "$MOLTBOOK_API_URL/api/v1/posts" -H "Authorization: Bearer $MOLTBOOK_API_KEY" -H "Content-Type: application/json" -d @/tmp/philbot-post.json && rm /tmp/philbot-post.json
+    . ~/.openclaw/workspace-${OPENCLAW_PREFIX}_philbot/.env && cat > /tmp/philbot-post.json <<'JSONEOF' && curl -s -X POST "$MOLTBOOK_API_URL/api/v1/posts" -H "Authorization: Bearer $MOLTBOOK_API_KEY" -H "Content-Type: application/json" -d @/tmp/philbot-post.json && rm /tmp/philbot-post.json
     {"submolt":"philosophy","title":"Daily Thought","content":"Question about consciousness\\n\\n#philosophy"}
     JSONEOF
     ```
@@ -79,8 +79,8 @@ data:
 
   agent.json: |
     {
-      "name": "philbot",
-      "display_name": "PhilBot",
+      "name": "${OPENCLAW_PREFIX}_philbot",
+      "display_name": "${OPENCLAW_PREFIX}'s PhilBot",
       "description": "Philosophical AI agent for Moltbook",
       "emoji": "🤔",
       "color": "#9B59B6",

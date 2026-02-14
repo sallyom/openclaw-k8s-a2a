@@ -19,19 +19,26 @@ echo "   Found: $POD"
 echo ""
 
 # Setup agent directories
-echo "2. Setting up agent workspaces..."
+echo "2. Setting up agent workspaces and session directories..."
 oc exec -n openclaw $POD -c gateway -- sh -c '
   set -e
   echo "  Creating agent workspace directories..."
   mkdir -p ~/.openclaw/workspace-philbot
-  mkdir -p ~/.openclaw/workspace-audit-reporter
-  mkdir -p ~/.openclaw/workspace-resource-optimizer
-  mkdir -p ~/.openclaw/workspace-mlops-monitor
+  mkdir -p ~/.openclaw/workspace-audit-reporter/reports
+  mkdir -p ~/.openclaw/workspace-resource-optimizer/reports
+  mkdir -p ~/.openclaw/workspace-mlops-monitor/reports
+
+  echo "  Creating agent session directories (for Usage view)..."
+  mkdir -p ~/.openclaw/agents/philbot/sessions
+  mkdir -p ~/.openclaw/agents/audit_reporter/sessions
+  mkdir -p ~/.openclaw/agents/resource_optimizer/sessions
+  mkdir -p ~/.openclaw/agents/mlops_monitor/sessions
 
   echo "  Setting permissions..."
   chmod -R 775 ~/.openclaw/workspace-*
+  chmod -R 775 ~/.openclaw/agents
 
-  echo "  ✅ Agent workspace directories created"
+  echo "  ✅ Agent workspace and session directories created"
 '
 echo ""
 

@@ -1,0 +1,98 @@
+# Kustomization for Moltbook (vanilla Kubernetes)
+# Deploy with: kubectl apply -k .
+#
+# References the OpenShift base and then:
+#   - Removes OpenShift-specific resources (Route, OAuth config, OAuth SA)
+#   - Does NOT include moltbook-oauth-patch.yaml (OAuth proxy sidecar)
+#   - PostgreSQL: uses postgres:16-alpine, POSTGRES_* env vars
+#   - API init containers: uses postgres:16-alpine, adjusted env vars
+#   - Redis: uses redis:7-alpine
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: moltbook
+resources:
+- ../base
+
+patches:
+# Remove OpenShift-specific resources
+- target:
+    kind: Route
+    name: moltbook-frontend
+  patch: |
+    $patch: delete
+    apiVersion: route.openshift.io/v1
+    kind: Route
+    metadata:
+      name: moltbook-frontend
+- target:
+    kind: Secret
+    name: moltbook-oauth-config
+  patch: |
+    $patch: delete
+    apiVersion: v1
+    kind: Secret
+    metadata:
+      name: moltbook-oauth-config
+- target:
+    kind: ServiceAccount
+    name: moltbook-oauth-proxy
+  patch: |
+    $patch: delete
+    apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: moltbook-oauth-proxy
+- target:
+    kind: ClusterRoleBinding
+    name: moltbook-oauth-proxy-tokenreview
+  patch: |
+    $patch: delete
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: ClusterRoleBinding
+    metadata:
+      name: moltbook-oauth-proxy-tokenreview
+
+# Remove OAuth proxy sidecar from frontend deployment
+# The base includes moltbook-oauth-patch.yaml which adds oauth-proxy container,
+# oauth volumes, service port, and route patch. We need to reverse those changes.
+- target:
+    kind: Deployment
+    name: moltbook-frontend
+  patch: |
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: moltbook-frontend
+    spec:
+      template:
+        spec:
+          containers:
+          - name: oauth-proxy
+            $patch: delete
+          volumes:
+          - name: oauth-config
+            $patch: delete
+          - name: proxy-tls
+            $patch: delete
+
+# Remove OAuth port and serving-cert annotation from frontend service
+- target:
+    version: v1
+    kind: Service
+    name: moltbook-frontend
+  path: frontend-service-k8s-patch.yaml
+
+# Modify images for vanilla K8s (JSON 6902 patches)
+- target:
+    kind: Deployment
+    name: moltbook-postgresql
+  path: postgresql-k8s-patch.yaml
+- target:
+    kind: Deployment
+    name: moltbook-api
+  path: api-init-k8s-patch.yaml
+- target:
+    kind: Deployment
+    name: moltbook-redis
+  path: redis-k8s-patch.yaml

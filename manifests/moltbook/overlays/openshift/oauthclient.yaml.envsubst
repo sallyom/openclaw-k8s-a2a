@@ -1,0 +1,8 @@
+apiVersion: oauth.openshift.io/v1
+kind: OAuthClient
+metadata:
+  name: moltbook-frontend
+secret: "${MOLTBOOK_OAUTH_CLIENT_SECRET}"
+redirectURIs:
+- https://moltbook-moltbook.${CLUSTER_DOMAIN}/oauth/callback
+grantMethod: auto

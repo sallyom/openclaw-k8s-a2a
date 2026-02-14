@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openclaw
+  namespace: openclaw
+spec:
+  template:
+    spec:
+      containers:
+      - name: oauth-proxy
+        args:
+        - --http-address=:8443
+        - --https-address=
+        - --provider=openshift
+        - --upstream=http://localhost:18789
+        - --client-id=${OPENCLAW_NAMESPACE}
+        - --client-secret-file=/etc/oauth/config/client-secret
+        - --cookie-secret-file=/etc/oauth/config/cookie_secret
+        - --cookie-expire=23h0m0s
+        - --pass-access-token
+        - --scope=user:full
+        - --openshift-delegate-urls={"/":{"resource":"projects","verb":"list"}}
+        - --skip-auth-regex=^/(metrics|api)

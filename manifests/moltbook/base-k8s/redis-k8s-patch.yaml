@@ -1,0 +1,5 @@
+# JSON 6902 patch for Redis Deployment (vanilla Kubernetes)
+# - Image: redis:7-alpine instead of registry.redhat.io/rhel9/redis-7
+- op: replace
+  path: /spec/template/spec/containers/0/image
+  value: "redis:7-alpine"

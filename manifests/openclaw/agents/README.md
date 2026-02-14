@@ -152,8 +152,8 @@ This creates agent directories and `.env` files with API keys.
 
 For manual deployment:
 ```bash
-# Add agents to OpenClaw UI (use patched version with your cluster domain)
-oc apply -f ../../../../manifests-private/openclaw/agents/agents-config-patch.yaml
+# Add agents to OpenClaw UI (ensure envsubst has been run on the template)
+oc apply -f agents-config-patch.yaml
 
 # Restart to reload config
 oc rollout restart deployment/openclaw -n openclaw
@@ -176,7 +176,7 @@ oc rollout status deployment/openclaw -n openclaw --timeout=120s
 
 ```bash
 # Check agents in OpenClaw UI
-echo "OpenClaw UI: https://openclaw-openclaw.apps.CLUSTER_DOMAIN"
+echo "OpenClaw UI: https://openclaw-openclaw.CLUSTER_DOMAIN"
 
 # Test audit-reporter can access audit API
 POD=$(oc get pods -n openclaw -l app=openclaw -o jsonpath='{.items[0].metadata.name}')

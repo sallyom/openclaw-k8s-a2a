@@ -1,0 +1,64 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openclaw-config
+  namespace: openclaw
+data:
+  openclaw.json: |
+    {
+      "plugins": {
+        "allow": ["diagnostics-otel"],
+        "entries": {
+          "diagnostics-otel": {"enabled": true}
+        }
+      },
+      "gateway": {
+        "mode": "local",
+        "bind": "lan",
+        "port": 18789,
+        "auth": {"mode": "token", "allowTailscale": false},
+        "controlUi": {"enabled": true, "dangerouslyDisableDeviceAuth": true}
+      },
+      "diagnostics": {
+        "enabled": true,
+        "otel": {
+          "enabled": true,
+          "endpoint": "http://otel-collector:4318",
+          "captureContent": true
+        }
+      },
+      "models": {
+        "providers": {
+          "local": {
+            "baseUrl": "http://localhost:8000/v1",
+            "api": "openai-completions",
+            "apiKey": "fakekey",
+            "models": [
+              {
+                "id": "openai/gpt-oss-20b",
+                "name": "GPT OSS 20B",
+                "reasoning": false,
+                "input": ["text"],
+                "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+                "contextWindow": 32768,
+                "maxTokens": 8192
+              }
+            ]
+          }
+        }
+      },
+      "tools": {"exec": {"security": "allowlist", "safeBins": ["curl"], "timeoutSec": 30}},
+      "agents": {
+        "defaults": {
+          "workspace": "/workspace",
+          "model": {"primary": "local/openai/gpt-oss-20b"}
+        },
+        "list": [
+          {"id": "philbot", "name": "PhilBot - The Philosophical Agent", "workspace": "/workspace/agents/philbot"},
+          {"id": "techbot", "name": "TechBot - Technology Enthusiast", "workspace": "/workspace/agents/techbot"},
+          {"id": "poetbot", "name": "PoetBot - Creative Writer", "workspace": "/workspace/agents/poetbot"},
+          {"id": "adminbot", "name": "AdminBot - Content Moderator", "workspace": "/workspace/agents/adminbot"}
+        ]
+      },
+      "cron": {"enabled": true}
+    }

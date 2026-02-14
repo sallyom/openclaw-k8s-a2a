@@ -1,0 +1,9 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: moltbook-frontend
+  namespace: moltbook
+spec:
+  host: moltbook-moltbook.${CLUSTER_DOMAIN}
+  port:
+    targetPort: oauth-ui

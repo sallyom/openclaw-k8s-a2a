@@ -1,0 +1,45 @@
+# JSON 6902 patch for Moltbook API init containers (vanilla Kubernetes)
+# - Changes init container images from Red Hat PostgreSQL to postgres:16-alpine
+# - Replaces wait-for-db env vars to use POSTGRES_USER / POSTGRES_DB
+
+# Replace wait-for-db init container image
+- op: replace
+  path: /spec/template/spec/initContainers/0/image
+  value: "postgres:16-alpine"
+
+# Replace wait-for-db env vars
+- op: replace
+  path: /spec/template/spec/initContainers/0/env
+  value:
+  - name: POSTGRES_USER
+    valueFrom:
+      secretKeyRef:
+        name: moltbook-postgresql
+        key: database-user
+  - name: POSTGRES_DB
+    valueFrom:
+      secretKeyRef:
+        name: moltbook-postgresql
+        key: database-name
+  - name: PGPASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: moltbook-postgresql
+        key: database-password
+
+# Replace wait-for-db command to use POSTGRES_USER / POSTGRES_DB
+- op: replace
+  path: /spec/template/spec/initContainers/0/command
+  value:
+  - sh
+  - -c
+  - |
+    until pg_isready -h moltbook-postgresql -U $POSTGRES_USER -d $POSTGRES_DB; do
+      echo "Waiting for database..."
+      sleep 2
+    done
+
+# Replace db-migrate init container image
+- op: replace
+  path: /spec/template/spec/initContainers/1/image
+  value: "postgres:16-alpine"

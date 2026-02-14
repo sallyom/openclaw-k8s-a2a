@@ -1,0 +1,6 @@
+# JSON 6902 patch for OpenClaw Service (vanilla Kubernetes)
+# Removes oauth-ui port and serving-cert annotation
+- op: remove
+  path: /metadata/annotations/service.beta.openshift.io~1serving-cert-secret-name
+- op: remove
+  path: /spec/ports/0

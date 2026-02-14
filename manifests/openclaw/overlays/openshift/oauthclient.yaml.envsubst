@@ -1,0 +1,8 @@
+apiVersion: oauth.openshift.io/v1
+kind: OAuthClient
+metadata:
+  name: ${OPENCLAW_NAMESPACE}
+secret: "${OPENCLAW_OAUTH_CLIENT_SECRET}"
+redirectURIs:
+- https://openclaw-${OPENCLAW_NAMESPACE}.${CLUSTER_DOMAIN}/oauth/callback
+grantMethod: auto

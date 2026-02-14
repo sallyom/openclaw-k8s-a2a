@@ -1,0 +1,63 @@
+# Kustomization for OpenClaw Gateway (vanilla Kubernetes)
+# Deploy with: kubectl apply -k .
+#
+# References the OpenShift base and then:
+#   - Removes OpenShift-specific resources (Route, OAuth config, OAuth SA)
+#   - Removes oauth-proxy sidecar container and volumes from Deployment
+#   - Removes serving-cert annotation from Service
+#   - Uses busybox instead of ubi9-minimal for init container
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: openclaw
+resources:
+- ../base
+
+patches:
+# Remove OpenShift-specific resources
+- target:
+    kind: Route
+    name: openclaw
+  patch: |
+    $patch: delete
+    apiVersion: route.openshift.io/v1
+    kind: Route
+    metadata:
+      name: openclaw
+- target:
+    kind: Secret
+    name: openclaw-oauth-config
+  patch: |
+    $patch: delete
+    apiVersion: v1
+    kind: Secret
+    metadata:
+      name: openclaw-oauth-config
+- target:
+    kind: ServiceAccount
+    name: openclaw-oauth-proxy
+  patch: |
+    $patch: delete
+    apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: openclaw-oauth-proxy
+- target:
+    kind: ClusterRoleBinding
+    name: openclaw-oauth-proxy-tokenreview
+  patch: |
+    $patch: delete
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: ClusterRoleBinding
+    metadata:
+      name: openclaw-oauth-proxy-tokenreview
+
+# Modify Deployment for K8s
+- path: deployment-k8s-patch.yaml
+
+# Modify Service for K8s (JSON 6902 patch)
+- target:
+    version: v1
+    kind: Service
+    name: openclaw
+  path: service-k8s-patch.yaml

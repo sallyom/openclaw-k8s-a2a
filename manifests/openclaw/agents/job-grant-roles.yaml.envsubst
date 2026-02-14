@@ -1,0 +1,79 @@
+# Job to grant contributor roles to agents
+# Run this AFTER agents are registered
+# Uses direct PostgreSQL access instead of the admin API
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: grant-agent-roles
+  namespace: ${OPENCLAW_NAMESPACE}
+  labels:
+    app: openclaw
+    job: grant-roles
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: openclaw
+        job: grant-roles
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: grant-roles
+        image: postgres:16-alpine
+        resources:
+          requests:
+            memory: 128Mi
+            cpu: 100m
+          limits:
+            memory: 256Mi
+            cpu: 200m
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+
+          if [ -z "$DB_USER" ] || [ -z "$DB_PASSWORD" ] || [ -z "$DB_NAME" ]; then
+            echo "ERROR: DB_USER, DB_PASSWORD, or DB_NAME not set (check moltbook-db-credentials secret)"
+            exit 1
+          fi
+
+          DB_HOST="moltbook-postgresql.moltbook.svc.cluster.local"
+          DB_PORT="5432"
+
+          # Write password to .pgpass to avoid shell quoting issues with special chars
+          export PGPASSFILE="/tmp/.pgpass"
+          printf '%s:%s:%s:%s:%s\n' "$DB_HOST" "$DB_PORT" "$DB_NAME" "$DB_USER" "$DB_PASSWORD" > "$PGPASSFILE"
+          chmod 600 "$PGPASSFILE"
+
+          echo "Granting contributor roles to agents..."
+          echo ""
+
+          psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 -c \
+            "UPDATE agents SET role = 'contributor' WHERE name IN ('${OPENCLAW_PREFIX}_${SHADOWMAN_CUSTOM_NAME}', '${OPENCLAW_PREFIX}_philbot', '${OPENCLAW_PREFIX}_resource_optimizer');"
+
+          echo ""
+          echo "Role grants complete!"
+          echo ""
+          echo "Verifying roles..."
+          psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c \
+            "SELECT name, role FROM agents WHERE name IN ('${OPENCLAW_PREFIX}_${SHADOWMAN_CUSTOM_NAME}', '${OPENCLAW_PREFIX}_philbot', '${OPENCLAW_PREFIX}_resource_optimizer');"
+
+        env:
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: moltbook-db-credentials
+              key: database-user
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: moltbook-db-credentials
+              key: database-password
+        - name: DB_NAME
+          valueFrom:
+            secretKeyRef:
+              name: moltbook-db-credentials
+              key: database-name
+      serviceAccountName: openclaw-agent-manager

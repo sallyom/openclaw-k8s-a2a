@@ -1,0 +1,13 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: moltbook-api
+  namespace: moltbook
+spec:
+  template:
+    spec:
+      containers:
+      - name: api
+        env:
+        - name: BASE_URL
+          value: https://moltbook-moltbook.${CLUSTER_DOMAIN}
