@@ -148,36 +148,56 @@ else
   echo ""
 fi
 
-# Prompt for OpenClaw namespace prefix (required)
-log_info "OpenClaw namespace (each team member gets their own):"
-log_info "  Format: <prefix>-openclaw (e.g., sally-openclaw, bob-openclaw)"
-echo ""
-while true; do
-  read -p "  Enter your prefix: " OPENCLAW_PREFIX
-  if [ -n "$OPENCLAW_PREFIX" ]; then
-    break
-  fi
-  log_error "A prefix is required to make your OpenClaw instance unique."
-  log_error "Each team member must use a different prefix (e.g., your name)."
-done
-OPENCLAW_NAMESPACE="${OPENCLAW_PREFIX}-openclaw"
-log_success "OpenClaw namespace: $OPENCLAW_NAMESPACE"
-echo ""
-
-# Prompt for agent name
-log_info "Your default agent is 'Shadowman'. You can customize its name."
-log_info "  This is the agent other teammates will see when you communicate via A2A."
-read -p "  Enter a name (or press Enter to keep 'Shadowman'): " CUSTOM_NAME
-if [ -n "$CUSTOM_NAME" ]; then
-  SHADOWMAN_DISPLAY_NAME="$CUSTOM_NAME"
-  SHADOWMAN_CUSTOM_NAME=$(echo "$CUSTOM_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '_' | tr -cd 'a-z0-9_')
-  log_success "Agent: '${SHADOWMAN_DISPLAY_NAME}' (id: ${OPENCLAW_PREFIX}_${SHADOWMAN_CUSTOM_NAME})"
-else
-  SHADOWMAN_CUSTOM_NAME="shadowman"
-  SHADOWMAN_DISPLAY_NAME="Shadowman"
-  log_info "Keeping default name: Shadowman"
+# Load existing .env early so we can skip prompts on re-runs
+_ENV_REUSE=false
+if [ -f "$REPO_ROOT/.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$REPO_ROOT/.env"
+  set +a
+  _ENV_REUSE=true
 fi
-echo ""
+
+# Prompt for OpenClaw namespace prefix (skip if already set from .env)
+if [ -n "${OPENCLAW_PREFIX:-}" ]; then
+  OPENCLAW_NAMESPACE="${OPENCLAW_PREFIX}-openclaw"
+  SHADOWMAN_CUSTOM_NAME="${SHADOWMAN_CUSTOM_NAME:-shadowman}"
+  SHADOWMAN_DISPLAY_NAME="${SHADOWMAN_DISPLAY_NAME:-Shadowman}"
+  log_success "Re-run detected — using prefix '$OPENCLAW_PREFIX' from .env"
+  log_success "  Namespace: $OPENCLAW_NAMESPACE"
+  log_success "  Agent: ${SHADOWMAN_DISPLAY_NAME} (${OPENCLAW_PREFIX}_${SHADOWMAN_CUSTOM_NAME})"
+  echo ""
+else
+  log_info "OpenClaw namespace (each team member gets their own):"
+  log_info "  Format: <prefix>-openclaw (e.g., sally-openclaw, bob-openclaw)"
+  echo ""
+  while true; do
+    read -p "  Enter your prefix: " OPENCLAW_PREFIX
+    if [ -n "$OPENCLAW_PREFIX" ]; then
+      break
+    fi
+    log_error "A prefix is required to make your OpenClaw instance unique."
+    log_error "Each team member must use a different prefix (e.g., your name)."
+  done
+  OPENCLAW_NAMESPACE="${OPENCLAW_PREFIX}-openclaw"
+  log_success "OpenClaw namespace: $OPENCLAW_NAMESPACE"
+  echo ""
+
+  # Prompt for agent name
+  log_info "Your default agent is 'Shadowman'. You can customize its name."
+  log_info "  This is the agent other teammates will see when you communicate via A2A."
+  read -p "  Enter a name (or press Enter to keep 'Shadowman'): " CUSTOM_NAME
+  if [ -n "$CUSTOM_NAME" ]; then
+    SHADOWMAN_DISPLAY_NAME="$CUSTOM_NAME"
+    SHADOWMAN_CUSTOM_NAME=$(echo "$CUSTOM_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '_' | tr -cd 'a-z0-9_')
+    log_success "Agent: '${SHADOWMAN_DISPLAY_NAME}' (id: ${OPENCLAW_PREFIX}_${SHADOWMAN_CUSTOM_NAME})"
+  else
+    SHADOWMAN_CUSTOM_NAME="shadowman"
+    SHADOWMAN_DISPLAY_NAME="Shadowman"
+    log_info "Keeping default name: Shadowman"
+  fi
+  echo ""
+fi
 
 # Confirm deployment
 log_warn "This will deploy OpenClaw to namespace: $OPENCLAW_NAMESPACE"
@@ -190,26 +210,11 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
 fi
 echo ""
 
-# Save prompted values (source .env would clobber them)
-_PROMPTED_PREFIX="$OPENCLAW_PREFIX"
-_PROMPTED_AGENT_ID="$SHADOWMAN_CUSTOM_NAME"
-_PROMPTED_AGENT_DISPLAY="$SHADOWMAN_DISPLAY_NAME"
-
-# Generate or reuse secrets
-if [ -f "$REPO_ROOT/.env" ]; then
-  log_info "Existing .env found — reusing secrets (delete .env to regenerate)"
-  set -a
-  # shellcheck disable=SC1091
-  source "$REPO_ROOT/.env"
-  set +a
+# Reuse secrets from .env or generate new ones
+if $_ENV_REUSE; then
+  log_info "Reusing secrets from .env (delete .env to regenerate)"
   log_success "Secrets loaded from .env"
   echo ""
-
-  # Prompted values take precedence over what was in .env
-  OPENCLAW_PREFIX="$_PROMPTED_PREFIX"
-  OPENCLAW_NAMESPACE="${_PROMPTED_PREFIX}-openclaw"
-  SHADOWMAN_CUSTOM_NAME="$_PROMPTED_AGENT_ID"
-  SHADOWMAN_DISPLAY_NAME="$_PROMPTED_AGENT_DISPLAY"
 
   # Default any missing variables to empty
   OPENCLAW_GATEWAY_TOKEN="${OPENCLAW_GATEWAY_TOKEN:-}"
@@ -302,6 +307,9 @@ if [ -d "$REPO_ROOT/manifests-private" ]; then
   echo ""
 fi
 
+# Default MLflow URI (may not have been set on fresh runs)
+MLFLOW_TRACKING_URI="${MLFLOW_TRACKING_URI:-}"
+
 # Write .env file
 log_info "Writing .env file..."
 cat > "$REPO_ROOT/.env" <<EOF
@@ -320,6 +328,7 @@ GOOGLE_CLOUD_LOCATION=$GOOGLE_CLOUD_LOCATION
 VERTEX_SA_JSON_PATH=$VERTEX_SA_JSON_PATH
 SHADOWMAN_CUSTOM_NAME=$SHADOWMAN_CUSTOM_NAME
 SHADOWMAN_DISPLAY_NAME=$SHADOWMAN_DISPLAY_NAME
+MLFLOW_TRACKING_URI=$MLFLOW_TRACKING_URI
 EOF
 log_success ".env file created at $REPO_ROOT/.env"
 echo ""

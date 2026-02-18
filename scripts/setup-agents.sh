@@ -210,6 +210,15 @@ MLFLOW_URI="${MLFLOW_TRACKING_URI:-}"
 if [ -z "$MLFLOW_URI" ]; then
   log_info "MLflow tracking URI (for mlops-monitor to query NPS Agent traces):"
   read -p "  Enter URI (or press Enter to skip): " MLFLOW_URI
+  # Save to .env so we don't ask again on re-runs
+  if [ -n "$MLFLOW_URI" ] && [ -f "$REPO_ROOT/.env" ]; then
+    if grep -q '^MLFLOW_TRACKING_URI=' "$REPO_ROOT/.env"; then
+      sed -i'' -e "s|^MLFLOW_TRACKING_URI=.*|MLFLOW_TRACKING_URI=$MLFLOW_URI|" "$REPO_ROOT/.env"
+    else
+      echo "MLFLOW_TRACKING_URI=$MLFLOW_URI" >> "$REPO_ROOT/.env"
+    fi
+    log_success "Saved to .env"
+  fi
 fi
 if [ -n "$MLFLOW_URI" ]; then
   $KUBECTL create secret generic mlops-monitor-secrets \

@@ -1,0 +1,76 @@
+# CronJob: NPS Agent Evaluation
+# Runs eval test cases against the deployed NPS agent and logs results to MLflow.
+# Scheduled weekly, but can be triggered on-demand by Lynx or manually:
+#   oc create job nps-eval-manual --from=cronjob/nps-eval -n nps-agent
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nps-eval
+  labels:
+    app: nps-agent
+    app.kubernetes.io/component: eval
+spec:
+  schedule: "0 8 * * 1"  # Weekly on Monday at 8 AM UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 86400  # Clean up after 24h
+      template:
+        metadata:
+          labels:
+            app: nps-agent
+            component: eval
+        spec:
+          restartPolicy: Never
+          containers:
+          - name: eval
+            image: image-registry.openshift-image-registry.svc:5000/${NPS_AGENT_NAMESPACE}/nps-agent:latest
+            command: ["python3", "/eval/run_eval.py"]
+            env:
+            - name: NPS_AGENT_ENDPOINT
+              value: "http://nps-agent.${NPS_AGENT_NAMESPACE}.svc.cluster.local:8080/"
+            - name: MLFLOW_TRACKING_URI
+              valueFrom:
+                secretKeyRef:
+                  name: nps-agent-secrets
+                  key: MLFLOW_TRACKING_URI
+                  optional: true
+            - name: MLFLOW_EXPERIMENT_NAME
+              value: "NPSAgent"
+            - name: OPENAI_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: nps-agent-secrets
+                  key: OPENAI_BASE_URL
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: nps-agent-secrets
+                  key: OPENAI_API_KEY
+            - name: OPENAI_MODEL_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: nps-agent-secrets
+                  key: OPENAI_MODEL_NAME
+            # Serialize eval requests — the NPS agent can only handle one at a time
+            # (each request spawns an MCP subprocess + LLM call)
+            - name: MLFLOW_GENAI_EVAL_MAX_WORKERS
+              value: "1"
+            volumeMounts:
+            - name: eval-script
+              mountPath: /eval
+              readOnly: true
+            resources:
+              requests:
+                cpu: 100m
+                memory: 256Mi
+              limits:
+                cpu: 500m
+                memory: 512Mi
+          volumes:
+          - name: eval-script
+            configMap:
+              name: nps-agent-eval

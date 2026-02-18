@@ -58,6 +58,8 @@ openclaw-k8s/
 │       │   │   └── config-patch.yaml.envsubst   # Main gateway config template
 │       │   └── k8s/             # Vanilla Kubernetes overlay
 │       ├── llm/                 # vLLM reference deployment (GPU model server)
+│       ├── skills/              # Reusable agent skills
+│       │   └── nps/SKILL.md     # NPS Agent query skill
 │       └── agents/              # Agent configs, RBAC, cron jobs
 │           ├── shadowman/       # Default agent (customizable name)
 │           │   └── shadowman-agent.yaml.envsubst
@@ -65,10 +67,25 @@ openclaw-k8s/
 │           │   ├── resource-optimizer-agent.yaml.envsubst
 │           │   ├── resource-optimizer-rbac.yaml.envsubst
 │           │   └── resource-report-cronjob.yaml.envsubst
+│           ├── mlops-monitor/   # MLOps Monitor agent
+│           │   ├── mlops-monitor-agent.yaml.envsubst
+│           │   ├── mlops-monitor-rbac.yaml.envsubst
+│           │   └── mlops-monitor-cronjob.yaml.envsubst
 │           ├── audit-reporter/  # Compliance monitoring (future)
-│           ├── mlops-monitor/   # ML operations tracking (future)
 │           ├── agents-config-patch.yaml.envsubst  # Agent list config overlay
 │           └── remove-custom-agents.sh            # Cleanup script
+│
+├── manifests/
+│   └── nps-agent/               # NPS Agent (separate namespace, own SPIFFE identity)
+│       ├── nps-agent-deployment.yaml.envsubst  # Deployment with A2A + AuthBridge sidecars
+│       ├── nps-agent-a2a-bridge.yaml           # A2A bridge for /invocations API
+│       ├── nps-agent-eval.yaml                 # Eval script ConfigMap (6 test cases)
+│       ├── nps-agent-eval-job.yaml.envsubst    # CronJob: weekly eval + on-demand trigger
+│       ├── nps-agent-buildconfig.yaml          # S2I build from GitHub repo
+│       ├── npsagent-patch.yaml                 # vLLM compatibility patch (ChatCompletions)
+│       ├── nps-agent-service.yaml              # Service (A2A on 8080, invocations on 8090)
+│       ├── nps-agent-route.yaml                # OpenShift Route
+│       └── nps-agent-rbac.yaml                 # SA + SCC RBAC
 │
 ├── observability/               # OTEL sidecar and collector templates
 │   ├── openclaw-otel-sidecar.yaml.envsubst
@@ -144,7 +161,24 @@ All manifests comply with `restricted` SCC:
 | Agent | ID Pattern | Description | Model | Schedule |
 |-------|-----------|-------------|-------|----------|
 | Default | `<prefix>_<custom_name>` | Interactive agent (customizable name) | Anthropic Claude | On-demand |
-| Resource Optimizer | `<prefix>_resource_optimizer` | K8s resource analysis | In-cluster | Daily 8 AM UTC |
+| Resource Optimizer | `<prefix>_resource_optimizer` | K8s resource analysis | In-cluster | Every 8 hours |
+| MLOps Monitor | `<prefix>_mlops_monitor` | NPS Agent performance monitoring via MLflow | In-cluster | Every 6 hours |
+
+### NPS Agent (Separate Namespace)
+
+The NPS Agent is a standalone AI agent that answers questions about U.S. national parks. It deploys to its own namespace (`nps-agent`) with its own SPIFFE identity, A2A bridge, and AuthBridge sidecars.
+
+| Component | Details |
+|-----------|---------|
+| Source | https://github.com/Nehanth/nps_agent (S2I build) |
+| API | `/invocations` on port 8090, A2A bridge on port 8080 |
+| Model | In-cluster vLLM (`openai/gpt-oss-20b`) via `OpenAIChatCompletionsModel` |
+| MCP Tools | `search_parks`, `get_park_alerts`, `get_park_campgrounds`, `get_park_events`, `get_visitor_centers` |
+| Eval | CronJob weekly Monday 8 AM UTC, or on-demand: `oc create job nps-eval-$(date +%s) --from=cronjob/nps-eval -n nps-agent` |
+| Deploy script | `./scripts/setup-nps-agent.sh` |
+| Tracing | MLflow experiment "NPSAgent" |
+
+The default agent has an **nps** skill that queries the NPS Agent via curl. The MLOps Monitor agent watches the NPS Agent's MLflow traces and eval results.
 
 Agent workspaces follow the pattern `~/.openclaw/workspace-<agent_id>`. Each workspace contains:
 - `AGENTS.md` — Agent identity and instructions
@@ -157,7 +191,8 @@ Agent workspaces follow the pattern `~/.openclaw/workspace-<agent_id>`. Each wor
 ├── openclaw.json                                    # Gateway config (from ConfigMap)
 ├── agents/                                          # Agent metadata and sessions
 │   ├── <prefix>_<custom_name>/sessions/             # Session transcripts
-│   └── <prefix>_resource_optimizer/sessions/
+│   ├── <prefix>_resource_optimizer/sessions/
+│   └── <prefix>_mlops_monitor/sessions/
 ├── workspace/                                       # Default workspace
 ├── workspace-<prefix>_<custom_name>/                # Custom agent workspace
 │   ├── AGENTS.md
@@ -166,6 +201,11 @@ Agent workspaces follow the pattern `~/.openclaw/workspace-<agent_id>`. Each wor
 │   ├── AGENTS.md
 │   ├── agent.json
 │   └── .env                                         # OC_TOKEN (K8s SA token)
+├── workspace-<prefix>_mlops_monitor/
+│   ├── AGENTS.md
+│   └── agent.json
+├── skills/
+│   └── nps/SKILL.md                                 # NPS Agent query skill
 ├── cron/jobs.json                                   # Cron job definitions
 └── scripts/resource-report.sh                       # Resource analysis script
 ```
@@ -202,6 +242,7 @@ Agent workspaces follow the pattern `~/.openclaw/workspace-<agent_id>`. Each wor
 | `SHADOWMAN_CUSTOM_NAME` | User prompt in setup-agents.sh | Default agent ID component |
 | `SHADOWMAN_DISPLAY_NAME` | User prompt in setup-agents.sh | Default agent display name |
 | `DEFAULT_AGENT_MODEL` | Derived from API key availability | Model ID for the default agent |
+| `MLFLOW_TRACKING_URI` | User prompt in setup-agents.sh (saved to .env) | MLOps monitor MLflow endpoint |
 
 ## Common Tasks
 

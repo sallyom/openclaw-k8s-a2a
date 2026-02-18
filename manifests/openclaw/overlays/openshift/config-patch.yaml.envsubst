@@ -28,8 +28,7 @@ data:
           "endpoint": "http://localhost:4318",
           "traces": true,
           "metrics": true,
-          "logs": false,
-          "captureContent": true
+          "logs": false
         }
       },
       "models": {

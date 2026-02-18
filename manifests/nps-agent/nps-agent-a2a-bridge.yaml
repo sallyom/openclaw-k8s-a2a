@@ -95,7 +95,8 @@ data:
       }
 
       // Translate to NPS Agent /invocations format (MLflow ResponsesAgent)
-      const payload = JSON.stringify({ input: text });
+      // Format: { input: [{ role: "user", content: "text" }] }
+      const payload = JSON.stringify({ input: [{ role: 'user', content: text }] });
 
       const headers = {
         'Content-Type': 'application/json',
@@ -114,7 +115,7 @@ data:
       }
 
       // Extract response from MLflow ResponsesAgent format
-      // Format: { output: [{ role: "assistant", content: [{ type: "text", text: "..." }] }] }
+      // Actual format: { output: [{ type: "message", content: [{ type: "output_text", text: "..." }], role: "assistant" }] }
       let content = 'No response from NPS Agent';
       const output = result.body?.output;
       if (Array.isArray(output) && output.length > 0) {
@@ -122,7 +123,7 @@ data:
         if (typeof lastMsg === 'string') {
           content = lastMsg;
         } else if (Array.isArray(lastMsg?.content)) {
-          const textPart = lastMsg.content.find(c => c.type === 'text' || c.text);
+          const textPart = lastMsg.content.find(c => c.type === 'output_text' || c.type === 'text' || c.text);
           if (textPart) content = textPart.text || textPart;
         } else if (typeof lastMsg?.content === 'string') {
           content = lastMsg.content;

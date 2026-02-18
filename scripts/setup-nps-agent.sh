@@ -75,7 +75,7 @@ fi
 log_success "Model endpoint: $NPS_MODEL_ENDPOINT"
 
 # Model name
-NPS_MODEL_NAME="${OPENAI_MODEL_NAME:-gpt-oss-20b}"
+NPS_MODEL_NAME="${OPENAI_MODEL_NAME:-openai/gpt-oss-20b}"
 read -p "  Model name [${NPS_MODEL_NAME}]: " CUSTOM_MODEL
 if [ -n "$CUSTOM_MODEL" ]; then
   NPS_MODEL_NAME="$CUSTOM_MODEL"
@@ -213,6 +213,12 @@ $KUBECTL apply -f "$REPO_ROOT/manifests/nps-agent/nps-agent-a2a-bridge.yaml" -n 
 log_success "A2A bridge ConfigMap deployed"
 echo ""
 
+# Apply npsagent.py patch (vLLM compatibility — uses ChatCompletions model)
+log_info "Applying npsagent.py patch for vLLM compatibility..."
+$KUBECTL apply -f "$REPO_ROOT/manifests/nps-agent/npsagent-patch.yaml" -n "$NPS_AGENT_NAMESPACE"
+log_success "npsagent patch deployed"
+echo ""
+
 # Apply Deployment + Service + Route
 log_info "Deploying NPS Agent..."
 $KUBECTL apply -f "$REPO_ROOT/manifests/nps-agent/nps-agent-deployment.yaml" -n "$NPS_AGENT_NAMESPACE"
@@ -227,6 +233,14 @@ $KUBECTL rollout status deployment/nps-agent -n "$NPS_AGENT_NAMESPACE" --timeout
   log_warn "Deployment not ready yet — check: oc get pods -n $NPS_AGENT_NAMESPACE"
 }
 log_success "NPS Agent ready"
+echo ""
+
+# Deploy eval CronJob
+log_info "Deploying evaluation CronJob..."
+$KUBECTL apply -f "$REPO_ROOT/manifests/nps-agent/nps-agent-eval.yaml" -n "$NPS_AGENT_NAMESPACE"
+envsubst '${NPS_AGENT_NAMESPACE}' < "$REPO_ROOT/manifests/nps-agent/nps-agent-eval-job.yaml.envsubst" | \
+  $KUBECTL apply -f - -n "$NPS_AGENT_NAMESPACE"
+log_success "Eval CronJob deployed (weekly Monday 8AM UTC, or trigger with: oc create job nps-eval-now --from=cronjob/nps-eval -n $NPS_AGENT_NAMESPACE)"
 echo ""
 
 # Get route

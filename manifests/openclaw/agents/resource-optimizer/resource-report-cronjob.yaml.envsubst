@@ -40,6 +40,7 @@ spec:
           containers:
           - name: report
             image: registry.access.redhat.com/ubi9/nodejs-20-minimal:latest
+            imagePullPolicy: IfNotPresent
             resources:
               requests:
                 cpu: 100m

@@ -83,14 +83,18 @@ spec:
         - name: MLFLOW_TRACKING_AUTH
           value: "kubernetes"
         - name: MLFLOW_EXPERIMENT_NAME
-          value: "nps-agent"
+          value: "NPSAgent"
         resources:
           requests:
             cpu: 100m
-            memory: 256Mi
-          limits:
-            cpu: 500m
             memory: 512Mi
+          limits:
+            cpu: "1"
+            memory: 2Gi
+        volumeMounts:
+        - name: npsagent-patch
+          mountPath: /opt/app-root/src/npsagent.py
+          subPath: npsagent.py
         readinessProbe:
           httpGet:
             path: /ping
@@ -340,3 +344,7 @@ spec:
       - name: a2a-bridge-script
         configMap:
           name: nps-agent-a2a-bridge
+      # Patched npsagent.py — uses ChatCompletions model to work with vLLM
+      - name: npsagent-patch
+        configMap:
+          name: npsagent-patch

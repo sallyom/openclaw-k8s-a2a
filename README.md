@@ -126,7 +126,36 @@ Beyond the default interactive agent, you can deploy additional agents with spec
 ./scripts/setup-agents.sh --k8s     # Kubernetes
 ```
 
-This adds a **Resource Optimizer** agent with K8s RBAC, CronJobs, and scheduled analysis. See [docs/ADDITIONAL-AGENTS.md](docs/ADDITIONAL-AGENTS.md) for details.
+This adds:
+- **Resource Optimizer** — K8s resource analysis with RBAC, CronJobs, and scheduled cost reports
+- **MLOps Monitor** — Monitors the NPS Agent's MLflow traces and evaluation results, reports anomalies
+- **NPS Skill** — Teaches the default agent to query the NPS Agent for national park information
+
+See [docs/ADDITIONAL-AGENTS.md](docs/ADDITIONAL-AGENTS.md) for details.
+
+## NPS Agent
+
+A standalone AI agent that answers questions about U.S. national parks, deployed to its own namespace with a separate SPIFFE identity:
+
+```bash
+./scripts/setup-nps-agent.sh
+```
+
+The NPS Agent runs an [upstream Python agent](https://github.com/Nehanth/nps_agent) with 5 MCP tools connected to the NPS API, served via an A2A bridge with full AuthBridge authentication.
+
+**Evaluation:** A CronJob runs weekly (Monday 8 AM UTC) with 6 test cases scored by MLflow's GenAI scorers (Correctness, RelevanceToQuery). Results appear in the "NPSAgent" MLflow experiment.
+
+```bash
+# Trigger an eval run manually
+oc create job nps-eval-$(date +%s) --from=cronjob/nps-eval -n nps-agent
+
+# Check results
+JOB_NAME=$(oc get jobs -n nps-agent -l component=eval \
+  --sort-by='{.metadata.creationTimestamp}' -o jsonpath='{.items[-1].metadata.name}')
+oc logs -l job-name=$JOB_NAME -n nps-agent
+```
+
+See [docs/ADDITIONAL-AGENTS.md](docs/ADDITIONAL-AGENTS.md) for architecture details.
 
 ## Teardown
 
@@ -162,22 +191,28 @@ See the `.envsubst` templates in `manifests/openclaw/overlays/` for the full con
 openclaw-k8s/
 ├── scripts/
 │   ├── setup.sh                # Deploy OpenClaw + A2A skill
-│   ├── setup-agents.sh         # Deploy additional agents (resource-optimizer)
+│   ├── setup-agents.sh         # Deploy additional agents + skills
+│   ├── setup-nps-agent.sh      # Deploy NPS Agent (separate namespace)
 │   ├── update-jobs.sh          # Update cron jobs (quick iteration)
 │   ├── export-config.sh        # Export live config from running pod
 │   ├── teardown.sh             # Remove everything
 │   └── build-and-push.sh      # Build images with podman (optional)
 │
 ├── manifests/
-│   └── openclaw/
-│       ├── base/               # Core: deployment (7 containers), service, PVCs,
-│       │                       #   A2A bridge, AuthBridge, custom SCC
-│       ├── overlays/
-│       │   ├── openshift/      # OpenShift overlay (secrets, config, OAuth, routes)
-│       │   └── k8s/            # Vanilla Kubernetes overlay
-│       ├── agents/             # Additional agent configs, RBAC, cron jobs
-│       ├── skills/             # Reusable agent skills (A2A communication)
-│       └── llm/                # vLLM reference deployment (GPU model server)
+│   ├── openclaw/
+│   │   ├── base/               # Core: deployment (7 containers), service, PVCs,
+│   │   │                       #   A2A bridge, AuthBridge, custom SCC
+│   │   ├── overlays/
+│   │   │   ├── openshift/      # OpenShift overlay (secrets, config, OAuth, routes)
+│   │   │   └── k8s/            # Vanilla Kubernetes overlay
+│   │   ├── agents/             # Agent configs, RBAC, cron jobs
+│   │   ├── skills/             # Agent skills (NPS, A2A)
+│   │   └── llm/                # vLLM reference deployment (GPU model server)
+│   │
+│   └── nps-agent/              # NPS Agent deployment (own namespace + identity)
+│       ├── nps-agent-deployment.yaml.envsubst
+│       ├── nps-agent-eval.yaml          # Eval script (6 test cases)
+│       └── nps-agent-eval-job.yaml.envsubst  # Weekly eval CronJob
 │
 ├── observability/              # OTEL sidecar and collector templates
 │

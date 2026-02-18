@@ -45,3 +45,10 @@ manifests/openclaw/agents/shadowman/shadowman-agent.yaml
 manifests/openclaw/agents/resource-optimizer/resource-optimizer-agent.yaml
 manifests/openclaw/agents/resource-optimizer/resource-optimizer-rbac.yaml
 manifests/openclaw/agents/resource-optimizer/resource-report-cronjob.yaml
+manifests/openclaw/agents/mlops-monitor/mlops-monitor-agent.yaml
+manifests/openclaw/agents/mlops-monitor/mlops-monitor-cronjob.yaml
+manifests/openclaw/agents/mlops-monitor/mlops-monitor-rbac.yaml
+manifests/openclaw/overlays/openshift/scc-rbac.yaml
+manifests/openclaw/base/openclaw-agentcard.yaml
+manifests/nps-agent/nps-agent-deployment.yaml
+manifests/nps-agent/nps-agent-eval-job.yaml

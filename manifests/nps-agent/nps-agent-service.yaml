@@ -16,3 +16,7 @@ spec:
       targetPort: 8080
       protocol: TCP
       name: a2a
+    - port: 8090
+      targetPort: 8090
+      protocol: TCP
+      name: invocations

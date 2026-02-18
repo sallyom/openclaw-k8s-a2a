@@ -1,7 +1,7 @@
 ---
 name: nps
 description: Query the National Park Service agent for park information
-metadata: { "openclaw": { "emoji": "\ud83c\udfde\ufe0f", "requires": { "bins": ["curl", "jq"] } } }
+metadata: { "openclaw": { "emoji": "\ud83c\udfde\ufe0f", "requires": { "bins": ["curl"] } } }
 ---
 
 # NPS Skill -- National Park Service Queries
@@ -18,25 +18,19 @@ The NPS Agent runs as a standalone service with its own model and MCP tools. You
 RESPONSE=$(curl -s --max-time 300 -X POST \
   http://nps-agent.nps-agent.svc.cluster.local:8080/invocations \
   -H "Content-Type: application/json" \
-  -d '{"input": "Your question about national parks here"}')
+  -d '{"input": [{"role": "user", "content": "Your question about national parks here"}]}')
 
-echo "$RESPONSE" | jq -r '.output[-1].content[-1].text // .output'
+echo "$RESPONSE" | python3 -c "import sys,json; o=json.load(sys.stdin)['output']; print(next(c['text'] for m in reversed(o) for c in m.get('content',[]) if 'text' in c))"
 ```
 
 **Important:** The NPS Agent may take up to 60 seconds on the first request (cold start). Use `--max-time 300` to allow for this.
 
 ## Input Format
 
-The `/invocations` endpoint accepts JSON with an `input` field:
+The `/invocations` endpoint accepts JSON with an `input` array of messages:
 
 ```json
-{"input": "What national parks are in California?"}
-```
-
-Or with conversation history:
-
-```json
-{"input": [{"role": "user", "content": "What campgrounds are at Yosemite?"}]}
+{"input": [{"role": "user", "content": "What national parks are in California?"}]}
 ```
 
 ## Output Format
@@ -47,10 +41,11 @@ The response follows the MLflow ResponsesAgent format:
 {
   "output": [
     {
+      "type": "message",
       "role": "assistant",
       "content": [
         {
-          "type": "text",
+          "type": "output_text",
           "text": "California has nine national parks..."
         }
       ]
@@ -59,7 +54,11 @@ The response follows the MLflow ResponsesAgent format:
 }
 ```
 
-Extract the answer: `jq -r '.output[-1].content[-1].text'`
+Extract the answer:
+
+```bash
+echo "$RESPONSE" | python3 -c "import sys,json; o=json.load(sys.stdin)['output']; print(next(c['text'] for m in reversed(o) for c in m.get('content',[]) if 'text' in c))"
+```
 
 ## What the NPS Agent Can Answer
 
@@ -81,8 +80,8 @@ The agent has 5 MCP tools connected to the NPS API:
 RESPONSE=$(curl -s --max-time 300 -X POST \
   http://nps-agent.nps-agent.svc.cluster.local:8080/invocations \
   -H "Content-Type: application/json" \
-  -d '{"input": "What national parks are in Colorado?"}')
-echo "$RESPONSE" | jq -r '.output[-1].content[-1].text'
+  -d '{"input": [{"role": "user", "content": "What national parks are in Colorado?"}]}')
+echo "$RESPONSE" | python3 -c "import sys,json; o=json.load(sys.stdin)['output']; print(next(c['text'] for m in reversed(o) for c in m.get('content',[]) if 'text' in c))"
 ```
 
 ### Check park alerts
@@ -91,8 +90,8 @@ echo "$RESPONSE" | jq -r '.output[-1].content[-1].text'
 RESPONSE=$(curl -s --max-time 300 -X POST \
   http://nps-agent.nps-agent.svc.cluster.local:8080/invocations \
   -H "Content-Type: application/json" \
-  -d '{"input": "Are there any current alerts or closures at Yellowstone National Park?"}')
-echo "$RESPONSE" | jq -r '.output[-1].content[-1].text'
+  -d '{"input": [{"role": "user", "content": "Are there any current alerts or closures at Yellowstone National Park?"}]}')
+echo "$RESPONSE" | python3 -c "import sys,json; o=json.load(sys.stdin)['output']; print(next(c['text'] for m in reversed(o) for c in m.get('content',[]) if 'text' in c))"
 ```
 
 ### Get campground info
@@ -101,8 +100,8 @@ echo "$RESPONSE" | jq -r '.output[-1].content[-1].text'
 RESPONSE=$(curl -s --max-time 300 -X POST \
   http://nps-agent.nps-agent.svc.cluster.local:8080/invocations \
   -H "Content-Type: application/json" \
-  -d '{"input": "What campgrounds are available at the Grand Canyon and what amenities do they have?"}')
-echo "$RESPONSE" | jq -r '.output[-1].content[-1].text'
+  -d '{"input": [{"role": "user", "content": "What campgrounds are available at the Grand Canyon and what amenities do they have?"}]}')
+echo "$RESPONSE" | python3 -c "import sys,json; o=json.load(sys.stdin)['output']; print(next(c['text'] for m in reversed(o) for c in m.get('content',[]) if 'text' in c))"
 ```
 
 ## Health Check
@@ -114,6 +113,39 @@ curl -s http://nps-agent.nps-agent.svc.cluster.local:8080/ping
 ```
 
 Returns `200 OK` if healthy.
+
+## Run Agent Evaluation
+
+You can trigger an evaluation of the NPS Agent. This runs 6 test cases (parks by state, park codes, campgrounds, alerts, visitor centers) and checks that expected facts appear in the responses.
+
+### Trigger an eval run
+
+```bash
+oc create job nps-eval-$(date +%s) --from=cronjob/nps-eval -n nps-agent
+```
+
+### Check eval status
+
+```bash
+oc get jobs -n nps-agent -l component=eval --sort-by='{.metadata.creationTimestamp}'
+```
+
+### Read eval results
+
+```bash
+JOB_NAME=$(oc get jobs -n nps-agent -l component=eval --sort-by='{.metadata.creationTimestamp}' -o jsonpath='{.items[-1].metadata.name}')
+oc logs -l job-name=$JOB_NAME -n nps-agent
+```
+
+The eval output shows pass/fail for each test case, expected facts found, latency per query, and an overall summary. Results are also logged to the NPSAgent experiment in MLflow.
+
+### Quick eval (3 test cases only)
+
+To run a faster eval, create the job manually:
+
+```bash
+oc create job nps-eval-quick -n nps-agent --image=image-registry.openshift-image-registry.svc:5000/nps-agent/nps-agent:latest -- python3 /eval/run_eval.py --quick --standalone
+```
 
 ## Error Handling
 

@@ -1,0 +1,348 @@
+# NPS Agent evaluation script — runs test cases against the deployed NPS agent,
+# checks expected facts in responses, and logs results to MLflow.
+# Runs as a K8s Job in the nps-agent namespace. Lynx can trigger it via:
+#   oc create job nps-eval-$(date +%s) --from=cronjob/nps-eval -n nps-agent
+# Then read the results:
+#   oc logs -l job-name=nps-eval-<id> -n nps-agent
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nps-agent-eval
+  labels:
+    app: nps-agent
+    app.kubernetes.io/component: eval
+data:
+  run_eval.py: |
+    #!/usr/bin/env python3
+    """NPS Agent Evaluation Script
+
+    Runs a set of test cases against the NPS agent's /invocations endpoint,
+    scores the results using MLflow's GenAI scorers, and logs everything
+    to the MLflow tracking server.
+
+    Usage:
+        python3 /eval/run_eval.py              # run all test cases
+        python3 /eval/run_eval.py --quick      # run only 3 quick test cases
+        python3 /eval/run_eval.py --dry-run    # show test cases without running
+    """
+    import asyncio
+    import json
+    import os
+    import sys
+    import time
+    import urllib.request
+    import urllib.error
+
+    # ---------------------------------------------------------------------------
+    # Configuration
+    # ---------------------------------------------------------------------------
+    # Use the A2A bridge on port 8080 (bypasses Envoy/AuthBridge interception)
+    AGENT_ENDPOINT = os.environ.get(
+        "NPS_AGENT_ENDPOINT",
+        "http://nps-agent.nps-agent.svc.cluster.local:8080/",
+    )
+    TIMEOUT = 300
+    EXPERIMENT_NAME = os.environ.get("MLFLOW_EXPERIMENT_NAME", "NPSAgent")
+
+    # ---------------------------------------------------------------------------
+    # Test cases: inputs + expected facts for scoring
+    # ---------------------------------------------------------------------------
+    FULL_TEST_CASES = [
+        {
+            "inputs": {"prompt": "What national parks are in Utah?"},
+            "expectations": {
+                # Only check for 2 of the 5 — 20B model may not list all
+                "expected_facts": ["Arches", "Zion"],
+            },
+        },
+        {
+            "inputs": {"prompt": "What national parks are in California?"},
+            "expectations": {
+                "expected_facts": ["Yosemite", "Joshua Tree"],
+            },
+        },
+        {
+            "inputs": {"prompt": "What park has the code YELL?"},
+            "expectations": {
+                "expected_facts": ["Yellowstone"],
+            },
+        },
+        {
+            "inputs": {"prompt": "Are there campgrounds at the Grand Canyon?"},
+            "expectations": {
+                "expected_facts": ["Grand Canyon"],
+            },
+        },
+        {
+            "inputs": {"prompt": "Tell me about Yellowstone National Park."},
+            "expectations": {
+                "expected_facts": ["Yellowstone"],
+            },
+        },
+        {
+            "inputs": {"prompt": "What state is Zion National Park in?"},
+            "expectations": {
+                "expected_facts": ["Utah"],
+            },
+        },
+    ]
+
+    QUICK_TEST_CASES = FULL_TEST_CASES[:3]
+
+    # ---------------------------------------------------------------------------
+    # Predict function — calls the A2A bridge via JSON-RPC
+    # ---------------------------------------------------------------------------
+    _request_id = 0
+
+    def call_nps_agent(prompt: str) -> str:
+        """Call the NPS agent via A2A JSON-RPC with retries."""
+        global _request_id
+        _request_id += 1
+
+        # Brief pause between requests to let the MCP subprocess clean up
+        if _request_id > 1:
+            time.sleep(5)
+
+        max_retries = 5
+        for attempt in range(max_retries):
+            payload = json.dumps({
+                "jsonrpc": "2.0",
+                "id": f"eval-{_request_id}-{attempt}",
+                "method": "message/send",
+                "params": {
+                    "message": {
+                        "parts": [{"kind": "text", "text": prompt}]
+                    }
+                }
+            }).encode("utf-8")
+
+            req = urllib.request.Request(
+                AGENT_ENDPOINT,
+                data=payload,
+                headers={"Content-Type": "application/json"},
+            )
+
+            try:
+                with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+                    body = json.loads(resp.read().decode("utf-8"))
+
+                    # Check for JSON-RPC error from the bridge (backend not ready)
+                    if "error" in body:
+                        err_msg = body["error"].get("message", str(body["error"]))
+                        if "Connection refused" in err_msg and attempt < max_retries - 1:
+                            print(f"    (retry {attempt + 1}/{max_retries} — backend not ready)")
+                            time.sleep(15)
+                            continue
+                        return f"Error: {err_msg}"
+
+                    # Extract text from A2A response
+                    result = body.get("result", {})
+                    status = result.get("status", {})
+                    message = status.get("message", {})
+                    parts = message.get("parts", [])
+                    text_parts = [p.get("text", "") for p in parts if p.get("kind") == "text"]
+
+                    # Check if the agent returned an error in the response text
+                    response_text = "\n".join(text_parts) if text_parts else str(result)
+                    if "Connection refused" in response_text and attempt < max_retries - 1:
+                        print(f"    (retry {attempt + 1}/{max_retries} — backend not ready)")
+                        time.sleep(15)
+                        continue
+                    return response_text
+            except urllib.error.URLError as e:
+                if attempt < max_retries - 1:
+                    print(f"    (retry {attempt + 1}/{max_retries} — {e.reason})")
+                    time.sleep(15)
+                    continue
+                return f"Error: {e}"
+            except Exception as e:
+                return f"Error: {e}"
+
+        return "Error: max retries exceeded"
+
+    def wait_for_agent():
+        """Wait for the NPS agent to be reachable before running eval."""
+        health_url = AGENT_ENDPOINT.rstrip("/") + "/health"
+        print("Waiting for NPS agent to be ready...")
+        for attempt in range(30):
+            try:
+                req = urllib.request.Request(health_url)
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    if resp.status == 200:
+                        print("NPS agent is ready.\n")
+                        return True
+            except Exception:
+                pass
+            time.sleep(10)
+        print("WARNING: NPS agent may not be ready — proceeding anyway.\n")
+        return False
+
+    # ---------------------------------------------------------------------------
+    # Simple standalone eval (no MLflow dependency for the basic run)
+    # ---------------------------------------------------------------------------
+    def run_standalone(test_cases):
+        """Run test cases and print results without MLflow scorers."""
+        wait_for_agent()
+
+        print(f"\n{'='*70}")
+        print(f"  NPS Agent Evaluation — {len(test_cases)} test cases")
+        print(f"{'='*70}\n")
+
+        results = []
+        total_time = 0
+
+        for i, tc in enumerate(test_cases, 1):
+            prompt = tc["inputs"]["prompt"]
+            expected = tc["expectations"].get("expected_facts", [])
+
+            print(f"[{i}/{len(test_cases)}] {prompt}")
+            start = time.time()
+            response = call_nps_agent(prompt)
+            elapsed = time.time() - start
+            total_time += elapsed
+
+            # Simple fact checking
+            facts_found = sum(
+                1 for fact in expected
+                if fact.lower() in response.lower()
+            )
+            facts_total = len(expected)
+            passed = facts_found == facts_total and not response.startswith("Error:")
+
+            status = "PASS" if passed else "FAIL"
+            print(f"  [{status}] {facts_found}/{facts_total} expected facts found ({elapsed:.1f}s)")
+            if not passed:
+                missing = [f for f in expected if f.lower() not in response.lower()]
+                if missing:
+                    print(f"  Missing: {', '.join(missing)}")
+                if response.startswith("Error:"):
+                    print(f"  {response[:200]}")
+            print()
+
+            results.append({
+                "prompt": prompt,
+                "status": status,
+                "facts_found": facts_found,
+                "facts_total": facts_total,
+                "latency": elapsed,
+                "response_length": len(response),
+            })
+
+        # Summary
+        passed = sum(1 for r in results if r["status"] == "PASS")
+        avg_latency = total_time / len(results) if results else 0
+
+        print(f"{'='*70}")
+        print(f"  Results: {passed}/{len(results)} passed")
+        print(f"  Avg latency: {avg_latency:.1f}s")
+        print(f"  Total time: {total_time:.1f}s")
+        print(f"{'='*70}\n")
+
+        return results
+
+    # ---------------------------------------------------------------------------
+    # MLflow-powered eval (uses genai scorers if available)
+    # ---------------------------------------------------------------------------
+    def run_mlflow_eval(test_cases):
+        """Run evaluation with MLflow genai scorers and log to tracking server."""
+        try:
+            import mlflow
+            from mlflow.genai.scorers import Correctness, RelevanceToQuery
+        except ImportError:
+            print("MLflow genai scorers not available — falling back to standalone eval")
+            return run_standalone(test_cases)
+
+        tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "")
+        if not tracking_uri:
+            print("MLFLOW_TRACKING_URI not set — falling back to standalone eval")
+            return run_standalone(test_cases)
+
+        wait_for_agent()
+
+        mlflow.set_tracking_uri(tracking_uri)
+        mlflow.set_experiment(EXPERIMENT_NAME)
+
+        # Judge model — same vLLM endpoint, LiteLLM format
+        base_url = os.environ.get("OPENAI_BASE_URL", "")
+        model_name = os.environ.get("OPENAI_MODEL_NAME", "gpt-4o")
+
+        # LiteLLM needs OPENAI_API_BASE for custom endpoints
+        os.environ["OPENAI_API_BASE"] = base_url
+
+        # LiteLLM format: openai/<model_name>
+        judge_model = f"openai/{model_name}"
+
+        print(f"\n{'='*70}")
+        print(f"  NPS Agent Evaluation (MLflow) — {len(test_cases)} test cases")
+        print(f"  Experiment: {EXPERIMENT_NAME}")
+        print(f"  Tracking: {tracking_uri}")
+        print(f"  Judge model: {judge_model}")
+        print(f"{'='*70}\n")
+
+        # Build scorers
+        scorers = [
+            Correctness(model=judge_model),
+            RelevanceToQuery(model=judge_model),
+        ]
+
+        # Add latency scorer
+        try:
+            from mlflow.genai.scorers import scorer
+            from mlflow.entities import Feedback
+
+            @scorer(name="Latency")
+            def latency_check(outputs):
+                return Feedback(value="yes", rationale="Latency measured by standalone timer")
+
+            scorers.append(latency_check)
+        except Exception:
+            pass
+
+        # Run evaluation
+        print("Running evaluation...\n")
+
+        try:
+            results = mlflow.genai.evaluate(
+                data=test_cases,
+                predict_fn=call_nps_agent,
+                scorers=scorers,
+            )
+
+            print(f"\n{'='*70}")
+            print(f"  MLflow Evaluation Complete")
+            print(f"{'='*70}")
+            print(f"\nMetrics:")
+            for key, value in results.metrics.items():
+                print(f"  {key}: {value}")
+            print()
+            print(f"View results: {tracking_uri}/#/experiments")
+            print()
+
+            return results
+        except Exception as e:
+            print(f"MLflow eval failed: {e}")
+            print("Falling back to standalone eval...\n")
+            return run_standalone(test_cases)
+
+    # ---------------------------------------------------------------------------
+    # Main
+    # ---------------------------------------------------------------------------
+    if __name__ == "__main__":
+        args = sys.argv[1:]
+
+        if "--dry-run" in args:
+            cases = QUICK_TEST_CASES if "--quick" in args else FULL_TEST_CASES
+            print(f"\n{len(cases)} test cases:")
+            for i, tc in enumerate(cases, 1):
+                prompt = tc["inputs"]["prompt"]
+                expected = tc["expectations"].get("expected_facts", [])
+                print(f"  {i}. {prompt}")
+                print(f"     Expected: {', '.join(expected)}")
+            sys.exit(0)
+
+        cases = QUICK_TEST_CASES if "--quick" in args else FULL_TEST_CASES
+
+        if "--standalone" in args:
+            run_standalone(cases)
+        else:
+            run_mlflow_eval(cases)

@@ -30,6 +30,7 @@ spec:
           containers:
           - name: report
             image: registry.access.redhat.com/ubi9/nodejs-20-minimal:latest
+            imagePullPolicy: IfNotPresent
             resources:
               requests:
                 cpu: 50m
@@ -53,7 +54,7 @@ spec:
               const fs = require("fs");
 
               const MLFLOW_URI = process.env.MLFLOW_TRACKING_URI || "";
-              const EXPERIMENT_NAME = "nps-agent";
+              const EXPERIMENT_NAME = "NPSAgent";
               const MAX_TRACES = 50;
 
               // K8s API access for ConfigMap update
@@ -61,25 +62,34 @@ spec:
               const K8S_NS = fs.readFileSync("/var/run/secrets/kubernetes.io/serviceaccount/namespace", "utf8").trim();
               const K8S_CA = fs.readFileSync("/var/run/secrets/kubernetes.io/serviceaccount/ca.crt");
 
-              function mlflowGet(path) {
-                return new Promise((resolve, reject) => {
+              function mlflowRequest(method, path, body) {
+                return new Promise((resolve) => {
                   const url = new URL(path, MLFLOW_URI);
                   const mod = url.protocol === "https:" ? https : http;
                   const headers = { "Accept": "application/json" };
-                  // Add SA token for RHOAI auth
                   if (K8S_TOKEN) headers["Authorization"] = "Bearer " + K8S_TOKEN;
-                  const req = mod.get(url.href, { headers, rejectUnauthorized: false }, (res) => {
+                  const bodyStr = body ? JSON.stringify(body) : null;
+                  if (bodyStr) {
+                    headers["Content-Type"] = "application/json";
+                    headers["Content-Length"] = Buffer.byteLength(bodyStr);
+                  }
+                  const opts = { method, hostname: url.hostname, port: url.port, path: url.pathname + url.search, headers, rejectUnauthorized: false };
+                  const req = mod.request(opts, (res) => {
                     const chunks = [];
                     res.on("data", c => chunks.push(c));
                     res.on("end", () => {
-                      try { resolve(JSON.parse(Buffer.concat(chunks).toString())); }
-                      catch (e) { resolve(null); }
+                      const raw = Buffer.concat(chunks).toString();
+                      try { resolve(JSON.parse(raw)); }
+                      catch (e) { console.error("Parse error on " + method + " " + path + ": " + raw.substring(0, 200)); resolve(null); }
                     });
                   });
-                  req.on("error", () => resolve(null));
+                  req.on("error", (e) => { console.error("Request error on " + method + " " + path + ": " + e.message); resolve(null); });
                   req.setTimeout(30000, () => { req.destroy(); resolve(null); });
+                  if (bodyStr) req.write(bodyStr);
+                  req.end();
                 });
               }
+              function mlflowGet(path) { return mlflowRequest("GET", path); }
 
               async function main() {
                 const now = new Date();
@@ -110,7 +120,7 @@ spec:
                 report += "Experiment ID: " + expId + "\n\n";
 
                 // 2. Search for recent traces
-                const traceData = await mlflowGet("/api/2.0/mlflow/traces?experiment_id=" + expId + "&max_results=" + MAX_TRACES + "&order_by=timestamp_ms+DESC");
+                const traceData = await mlflowGet("/api/2.0/mlflow/traces?experiment_ids=" + expId + "&max_results=" + MAX_TRACES + "&order_by=timestamp_ms+DESC");
                 const traces = traceData?.traces || [];
 
                 report += "--- Trace Summary (last " + MAX_TRACES + " traces) ---\n";
@@ -159,8 +169,15 @@ spec:
 
                 // 4. Check for evaluation runs
                 report += "--- Evaluation Data ---\n";
-                const runsData = await mlflowGet("/api/2.0/mlflow/runs/search?experiment_ids=[%22" + expId + "%22]&filter_string=tags.mlflow.runName+LIKE+%27%25evaluation%25%27&max_results=5&order_by=start_time+DESC");
-                const evalRuns = runsData?.runs || [];
+                const runsData = await mlflowRequest("POST", "/api/2.0/mlflow/runs/search", {
+                  experiment_ids: [expId],
+                  max_results: 20,
+                  order_by: ["start_time DESC"]
+                });
+                const allRuns = runsData?.runs || [];
+                const evalRuns = allRuns.filter(r =>
+                  (r.data?.tags || []).some(t => t.key === "mlflow.run.isEval" && t.value === "true")
+                );
 
                 if (evalRuns.length === 0) {
                   report += "No evaluation runs found.\n";

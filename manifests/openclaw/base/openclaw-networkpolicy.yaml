@@ -1,5 +1,11 @@
 # NetworkPolicy: openclaw
 # Restricts network traffic to/from OpenClaw pods for security hardening
+#
+# STATUS: Commented out in kustomization.yaml — not applied by default.
+# The egress rules block all external/internet traffic (no public curl, no web search)
+# but may break OAuth proxy token redemption if it routes through external IPs.
+# To enable: uncomment openclaw-networkpolicy.yaml in base/kustomization.yaml
+# and test that OpenShift OAuth login still works.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -56,31 +62,28 @@ spec:
     - protocol: TCP
       port: 443
 
-  # Also allow egress to Kubernetes service CIDR for API server
-  - ports:
-    - protocol: TCP
-      port: 443
-    - protocol: TCP
-      port: 6443
-
-  # Allow access to in-cluster model service
-  # Adjust namespace label as needed for your cluster
+  # Allow egress to any in-cluster namespace on common ports
+  # Covers: K8s API server (443/6443), model service (8080/8443),
+  # OAuth proxy → OpenShift OAuth, AuthBridge → Keycloak,
+  # MLflow (5000), NPS Agent (8080), and any other in-cluster services.
+  # Blocks all external/internet egress (no public curl, no web search).
   - to:
     - namespaceSelector: {}
     ports:
     - protocol: TCP
-      port: 8080
+      port: 80
     - protocol: TCP
-      port: 8443
-
-  # Allow access to MLflow tracking server
-  - to:
-    - namespaceSelector:
-        matchLabels:
-          name: mlflow
-    ports:
+      port: 443
     - protocol: TCP
       port: 5000
+    - protocol: TCP
+      port: 6443
+    - protocol: TCP
+      port: 8080
+    - protocol: TCP
+      port: 8090
+    - protocol: TCP
+      port: 8443
 
   # Allow access to OTEL collector (localhost sidecar)
   - to:
@@ -101,13 +104,3 @@ spec:
       port: 4317
     - protocol: TCP
       port: 4318
-
-  # Allow HTTPS egress for external traffic
-  # Required for:
-  # - OAuth proxy to reach oauth-openshift.apps.<cluster-domain> (token redemption)
-  # - Any external API calls
-  - ports:
-    - protocol: TCP
-      port: 443
-    - protocol: TCP
-      port: 80
