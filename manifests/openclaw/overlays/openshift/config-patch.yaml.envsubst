@@ -53,6 +53,21 @@ data:
             "baseUrl": "https://api.anthropic.com",
             "api": "anthropic-messages",
             "models": []
+          },
+          "anthropic-vertex": {
+            "baseUrl": "https://${GOOGLE_CLOUD_LOCATION}-aiplatform.googleapis.com",
+            "api": "anthropic-messages",
+            "models": [
+              {
+                "id": "claude-sonnet-4-5",
+                "name": "Claude Sonnet 4.5 (Vertex)",
+                "reasoning": true,
+                "input": ["text", "image"],
+                "cost": {"input": 3, "output": 15, "cacheRead": 0.3, "cacheWrite": 3.75},
+                "contextWindow": 200000,
+                "maxTokens": 16384
+              }
+            ]
           }
         }
       },

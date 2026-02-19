@@ -352,9 +352,14 @@ export VERTEX_ENABLED="${VERTEX_ENABLED:-false}"
 export GOOGLE_CLOUD_PROJECT="${GOOGLE_CLOUD_PROJECT:-}"
 export GOOGLE_CLOUD_LOCATION="${GOOGLE_CLOUD_LOCATION:-}"
 
-# Agent model priority: Anthropic > Google Vertex > in-cluster
+# Agent model priority: Anthropic API > Vertex (anthropic or google) > in-cluster
+# VERTEX_PROVIDER controls which Vertex provider: "anthropic" or "google" (default)
+export VERTEX_PROVIDER="${VERTEX_PROVIDER:-google}"
 if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
   export DEFAULT_AGENT_MODEL="anthropic/claude-sonnet-4-5"
+elif [ "${VERTEX_ENABLED:-}" = "true" ] && [ "${VERTEX_PROVIDER}" = "anthropic" ]; then
+  export DEFAULT_AGENT_MODEL="anthropic-vertex/claude-sonnet-4-5"
+  log_info "Using Anthropic Vertex (Claude via GCP) as default agent model"
 elif [ "${VERTEX_ENABLED:-}" = "true" ]; then
   export DEFAULT_AGENT_MODEL="google-vertex/gemini-2.5-pro"
   log_info "Using Google Vertex (Gemini) as default agent model"
