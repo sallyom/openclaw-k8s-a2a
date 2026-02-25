@@ -284,9 +284,9 @@ Keycloak acts as the OAuth authorization server. It validates SPIFFE JWTs and is
 
 **Current values (cluster-specific, update for your environment):**
 ```
-KEYCLOAK_URL:  https://keycloak-spiffe-demo.apps.ocp-beta-test.nerc.mghpcc.org
+KEYCLOAK_URL:  https://keycloak-spiffe-demo.apps.ocp-demo.com
 KEYCLOAK_REALM: spiffe-demo
-TOKEN_URL:     https://keycloak-spiffe-demo.apps.ocp-beta-test.nerc.mghpcc.org/realms/spiffe-demo/protocol/openid-connect/token
+TOKEN_URL:     https://keycloak-spiffe-demo.apps.ocp-demo.com/realms/spiffe-demo/protocol/openid-connect/token
 ```
 
 ### 3. Kagenti Extension Images

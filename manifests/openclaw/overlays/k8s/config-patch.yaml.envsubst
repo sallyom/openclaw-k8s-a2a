@@ -53,7 +53,15 @@ data:
         }
       },
       "tools": {
-        "exec": {"security": "allowlist", "safeBins": ["cat", "curl", "jq"], "timeoutSec": 30},
+        "exec": {
+            "security": "allowlist",
+            "safeBins": ["cat", "curl", "jq"],
+            "safeBinProfiles": {
+              "cat": {},
+              "curl": {"deniedFlags": ["-o", "--output", "-O", "--remote-name", "--upload-file", "-T"]}
+            },
+            "timeoutSec": 30
+          },
         "agentToAgent": {
           "enabled": true,
           "allow": ["*"]
@@ -73,6 +81,12 @@ data:
             "subagents": {"allowAgents": ["*"]}
           }
         ]
+      },
+      "channels": {
+        "telegram": {
+          "dmPolicy": "allowlist",
+          "allowFrom": [${TELEGRAM_ALLOW_FROM}]
+        }
       },
       "cron": {"enabled": true}
     }

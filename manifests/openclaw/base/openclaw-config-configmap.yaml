@@ -110,6 +110,10 @@ data:
         "exec": {
           "security": "allowlist",
           "safeBins": ["curl", "jq"],
+          "safeBinProfiles": {
+            "curl": {"deniedFlags": ["-o", "--output", "-O", "--remote-name", "--upload-file", "-T"]},
+            "jq": {"maxPositional": 1, "allowedValueFlags": ["--arg", "--argjson", "--argstr"], "deniedFlags": ["--argfile", "--rawfile", "--slurpfile", "--from-file", "--library-path", "-L", "-f"]}
+          },
           "timeoutSec": 30
         }
       },

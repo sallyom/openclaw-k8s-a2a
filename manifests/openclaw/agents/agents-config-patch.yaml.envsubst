@@ -38,7 +38,8 @@ data:
         },
         "controlUi": {
           "enabled": true,
-          "dangerouslyDisableDeviceAuth": true
+          "dangerouslyDisableDeviceAuth": true,
+          "allowedOrigins": ["https://openclaw-${OPENCLAW_NAMESPACE}.${CLUSTER_DOMAIN}"]
         },
         "http": {
           "endpoints": {
@@ -131,6 +132,11 @@ data:
         "exec": {
           "security": "allowlist",
           "safeBins": ["cat", "curl", "jq"],
+          "safeBinProfiles": {
+            "cat": {},
+            "curl": {"deniedFlags": ["-o", "--output", "-O", "--remote-name", "--upload-file", "-T"]},
+            "jq": {"maxPositional": 1, "allowedValueFlags": ["--arg", "--argjson", "--argstr"], "deniedFlags": ["--argfile", "--rawfile", "--slurpfile", "--from-file", "--library-path", "-L", "-f"]}
+          },
           "timeoutSec": 30
         },
         "agentToAgent": {

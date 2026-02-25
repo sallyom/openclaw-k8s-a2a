@@ -173,7 +173,7 @@ fi
 
 # Prompt for OpenClaw namespace prefix (skip if already set from local .env)
 if $_ENV_REUSE && [ -n "${OPENCLAW_PREFIX:-}" ]; then
-  OPENCLAW_NAMESPACE="${OPENCLAW_PREFIX}-openclaw"
+  OPENCLAW_NAMESPACE="${OPENCLAW_NAMESPACE:-${OPENCLAW_PREFIX}-openclaw}"
   SHADOWMAN_CUSTOM_NAME="${SHADOWMAN_CUSTOM_NAME:-shadowman}"
   SHADOWMAN_DISPLAY_NAME="${SHADOWMAN_DISPLAY_NAME:-Shadowman}"
   log_success "Re-run detected — using prefix '$OPENCLAW_PREFIX' from .env"
@@ -193,6 +193,10 @@ else
     log_error "Each team member must use a different prefix (e.g., your name)."
   done
   OPENCLAW_NAMESPACE="${OPENCLAW_PREFIX}-openclaw"
+  read -p "  Namespace [${OPENCLAW_NAMESPACE}]: " CUSTOM_NS
+  if [ -n "$CUSTOM_NS" ]; then
+    OPENCLAW_NAMESPACE="$CUSTOM_NS"
+  fi
   log_success "OpenClaw namespace: $OPENCLAW_NAMESPACE"
   echo ""
 
@@ -323,9 +327,31 @@ else
     log_success "Vertex AI enabled: project=$GOOGLE_CLOUD_PROJECT region=$GOOGLE_CLOUD_LOCATION"
   else
     VERTEX_ENABLED=false
+    VERTEX_PROVIDER=""
     GOOGLE_CLOUD_PROJECT=""
     GOOGLE_CLOUD_LOCATION=""
     VERTEX_SA_JSON_PATH=""
+    log_info "Skipped"
+  fi
+  echo ""
+
+  # Prompt for Telegram bot token (optional)
+  log_info "Telegram bot (optional, for messaging your agent via Telegram):"
+  log_info "  Create a bot via @BotFather on Telegram to get a token"
+  read -p "  Telegram bot token (or press Enter to skip): " TELEGRAM_BOT_TOKEN
+  if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
+    TELEGRAM_ENABLED=true
+    log_info "  DM allowlist: only these Telegram user IDs can message the bot"
+    log_info "  Find your ID by messaging @userinfobot on Telegram"
+    read -p "  Allowed user IDs (comma-separated, e.g. 123456789): " TELEGRAM_ALLOW_FROM
+    if [ -z "$TELEGRAM_ALLOW_FROM" ]; then
+      log_warn "No user IDs provided — bot will reject all DMs until allowFrom is configured"
+    fi
+    log_success "Telegram enabled"
+  else
+    TELEGRAM_ENABLED=false
+    TELEGRAM_BOT_TOKEN=""
+    TELEGRAM_ALLOW_FROM=""
     log_info "Skipped"
   fi
   echo ""
@@ -397,6 +423,9 @@ GOOGLE_CLOUD_LOCATION=$GOOGLE_CLOUD_LOCATION
 VERTEX_SA_JSON_PATH=$VERTEX_SA_JSON_PATH
 SHADOWMAN_CUSTOM_NAME=$SHADOWMAN_CUSTOM_NAME
 SHADOWMAN_DISPLAY_NAME=$SHADOWMAN_DISPLAY_NAME
+TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN
+TELEGRAM_ENABLED=$TELEGRAM_ENABLED
+TELEGRAM_ALLOW_FROM=$TELEGRAM_ALLOW_FROM
 MLFLOW_TRACKING_URI=$MLFLOW_TRACKING_URI
 A2A_ENABLED=$A2A_ENABLED
 KEYCLOAK_URL=$KEYCLOAK_URL
@@ -426,6 +455,11 @@ export VERTEX_ENABLED="${VERTEX_ENABLED:-false}"
 export GOOGLE_CLOUD_PROJECT="${GOOGLE_CLOUD_PROJECT:-}"
 export GOOGLE_CLOUD_LOCATION="${GOOGLE_CLOUD_LOCATION:-}"
 
+# Telegram defaults (for existing .env files that don't have these yet)
+export TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
+export TELEGRAM_ENABLED="${TELEGRAM_ENABLED:-false}"
+export TELEGRAM_ALLOW_FROM="${TELEGRAM_ALLOW_FROM:-}"
+
 # Keycloak defaults (for A2A AuthBridge)
 export KEYCLOAK_URL="${KEYCLOAK_URL:-}"
 export KEYCLOAK_REALM="${KEYCLOAK_REALM:-}"
@@ -438,7 +472,8 @@ export VERTEX_PROVIDER="${VERTEX_PROVIDER:-google}"
 if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
   export DEFAULT_AGENT_MODEL="anthropic/claude-sonnet-4-5"
 elif [ "${VERTEX_ENABLED:-}" = "true" ] && [ "${VERTEX_PROVIDER}" = "anthropic" ]; then
-  export DEFAULT_AGENT_MODEL="anthropic-vertex/claude-sonnet-4-6"
+  # TODO: upgrade to "anthropic-vertex/claude-sonnet-4-6" when SA has access to 4.6 models
+  export DEFAULT_AGENT_MODEL="anthropic-vertex/claude-sonnet-4-5@20250929"
   log_info "Using Anthropic Vertex (Claude via GCP) as default agent model"
 elif [ "${VERTEX_ENABLED:-}" = "true" ]; then
   export DEFAULT_AGENT_MODEL="google-vertex/gemini-2.5-pro"
@@ -449,7 +484,7 @@ else
 fi
 
 # Explicit variable list to protect {agentId} and other non-env placeholders
-ENVSUBST_VARS='${CLUSTER_DOMAIN} ${OPENCLAW_PREFIX} ${OPENCLAW_NAMESPACE} ${OPENCLAW_GATEWAY_TOKEN} ${OPENCLAW_OAUTH_CLIENT_SECRET} ${OPENCLAW_OAUTH_COOKIE_SECRET} ${ANTHROPIC_API_KEY} ${SHADOWMAN_CUSTOM_NAME} ${SHADOWMAN_DISPLAY_NAME} ${MODEL_ENDPOINT} ${DEFAULT_AGENT_MODEL} ${GOOGLE_CLOUD_PROJECT} ${GOOGLE_CLOUD_LOCATION} ${KEYCLOAK_URL} ${KEYCLOAK_REALM} ${KEYCLOAK_ADMIN_USERNAME} ${KEYCLOAK_ADMIN_PASSWORD}'
+ENVSUBST_VARS='${CLUSTER_DOMAIN} ${OPENCLAW_PREFIX} ${OPENCLAW_NAMESPACE} ${OPENCLAW_GATEWAY_TOKEN} ${OPENCLAW_OAUTH_CLIENT_SECRET} ${OPENCLAW_OAUTH_COOKIE_SECRET} ${ANTHROPIC_API_KEY} ${SHADOWMAN_CUSTOM_NAME} ${SHADOWMAN_DISPLAY_NAME} ${MODEL_ENDPOINT} ${DEFAULT_AGENT_MODEL} ${GOOGLE_CLOUD_PROJECT} ${GOOGLE_CLOUD_LOCATION} ${TELEGRAM_ALLOW_FROM} ${KEYCLOAK_URL} ${KEYCLOAK_REALM} ${KEYCLOAK_ADMIN_USERNAME} ${KEYCLOAK_ADMIN_PASSWORD}'
 
 for tpl in $(find "$REPO_ROOT/manifests" "$REPO_ROOT/observability" -name '*.envsubst'); do
   yaml="${tpl%.envsubst}"
@@ -518,6 +553,10 @@ if [ "$A2A_ENABLED" != "true" ]; then
       kind: Secret
       metadata:
         name: authbridge-proxy-config
+  # NOTE: kagenti label stripping removed — labels are already commented out
+  # in base/openclaw-deployment.yaml to prevent kagenti operator from
+  # auto-creating AgentCards with restrictive NetworkPolicies.
+  # TODO: restore label stripping here when kagenti labels are re-enabled in base.
 STRIP_A2A
   log_success "A2A patches appended to kustomization.yaml"
 else
@@ -547,6 +586,17 @@ if [ "${VERTEX_ENABLED:-}" = "true" ] && [ -n "${VERTEX_SA_JSON_PATH:-}" ] && [ 
     --from-file=vertex-credentials.json="$VERTEX_SA_JSON_PATH" \
     --dry-run=client -o yaml | $KUBECTL apply -f -
   log_success "Vertex AI credentials secret created"
+  echo ""
+fi
+
+# Create Telegram bot secret (if enabled)
+if [ "${TELEGRAM_ENABLED:-}" = "true" ] && [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
+  log_info "Creating Telegram bot secret..."
+  $KUBECTL create secret generic telegram-secrets \
+    -n "$OPENCLAW_NAMESPACE" \
+    --from-literal=bot-token="$TELEGRAM_BOT_TOKEN" \
+    --dry-run=client -o yaml | $KUBECTL apply -f -
+  log_success "Telegram bot secret created"
   echo ""
 fi
 

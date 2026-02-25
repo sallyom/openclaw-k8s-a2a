@@ -1,6 +1,7 @@
 # Credentials
 *.env
 .env.*
+.env-*
 openclaw-config-export.json
 *credentials*.txt
 *.key
