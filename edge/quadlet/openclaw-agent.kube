@@ -1,0 +1,28 @@
+# ~/.config/containers/systemd/openclaw-agent.kube
+#
+# OpenClaw edge agent — runs as a rootless podman Quadlet managed by systemd.
+# Uses Pod YAML with ConfigMaps (podman kube play only supports ConfigMap, not Secret).
+# Stopped by default (Restart=no). Central supervisor starts/stops via SSH.
+#
+# Install: setup-edge.sh generates YAML from templates and copies everything here.
+# Start:   systemctl --user start openclaw-agent
+# Logs:    journalctl --user -u openclaw-agent -f
+
+[Unit]
+Description=OpenClaw Edge Agent
+
+[Kube]
+Yaml=openclaw-agent-pod.yaml
+ConfigMap=openclaw-agent-config.yaml
+ConfigMap=openclaw-agent-agents.yaml
+ConfigMap=openclaw-agent-secret.yaml
+
+[Service]
+# CRITICAL: agent stays stopped until supervisor explicitly starts it.
+# No automatic restarts — central gateway controls lifecycle.
+Restart=no
+TimeoutStartSec=60
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target

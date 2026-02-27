@@ -1,0 +1,72 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: openclaw-agent
+spec:
+  hostNetwork: true
+  initContainers:
+    - name: init-config
+      image: registry.access.redhat.com/ubi9-minimal:latest
+      command:
+        - /bin/sh
+        - -c
+        - |
+          # Copy openclaw.json from ConfigMap into the PVC
+          cp /config/openclaw.json /home/node/.openclaw/openclaw.json
+
+          # Create workspace and agent directories
+          mkdir -p /home/node/.openclaw/workspace
+          mkdir -p /home/node/.openclaw/agents
+
+          # Copy agent files from ConfigMap into workspace (always overwrite — config is source of truth)
+          cp /agents/AGENTS.md /home/node/.openclaw/workspace/AGENTS.md
+          cp /agents/agent.json /home/node/.openclaw/workspace/agent.json
+
+          # Fix permissions for rootless container (uid 1000)
+          chmod -R 775 /home/node/.openclaw
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+      volumeMounts:
+        - name: openclaw-data
+          mountPath: /home/node/.openclaw
+        - name: openclaw-config
+          mountPath: /config
+          readOnly: true
+        - name: openclaw-agents
+          mountPath: /agents
+          readOnly: true
+  containers:
+    - name: openclaw-agent
+      image: ${OPENCLAW_IMAGE}
+      command: ["node", "openclaw.mjs", "gateway", "--allow-unconfigured"]
+      env:
+        - name: NODE_ENV
+          value: production
+        - name: OPENCLAW_GATEWAY_TOKEN
+          valueFrom:
+            configMapKeyRef:
+              name: openclaw-agent-secret
+              key: OPENCLAW_GATEWAY_TOKEN
+        - name: ANTHROPIC_API_KEY
+          valueFrom:
+            configMapKeyRef:
+              name: openclaw-agent-secret
+              key: ANTHROPIC_API_KEY
+              optional: true
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+      volumeMounts:
+        - name: openclaw-data
+          mountPath: /home/node/.openclaw
+  volumes:
+    - name: openclaw-data
+      persistentVolumeClaim:
+        claimName: openclaw-data
+    - name: openclaw-config
+      configMap:
+        name: openclaw-agent-config
+    - name: openclaw-agents
+      configMap:
+        name: openclaw-agent-agents

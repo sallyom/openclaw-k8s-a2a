@@ -1,6 +1,0 @@
-# ~/.config/containers/systemd/otel-collector-config.volume
-#
-# Volume for OTEL collector configuration.
-# setup-edge.sh writes config.yaml into this volume.
-
-[Volume]

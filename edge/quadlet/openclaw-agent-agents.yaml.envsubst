@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openclaw-agent-agents
+data:
+  AGENTS.md: |
+    ${AGENTS_MD_CONTENT}
+  agent.json: |
+    ${AGENT_JSON_CONTENT}

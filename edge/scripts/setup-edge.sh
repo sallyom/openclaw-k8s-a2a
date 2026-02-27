@@ -18,8 +18,8 @@
 #   1. Verifies prerequisites (podman, systemd, SELinux)
 #   2. Prompts for configuration (model endpoint, agent name, OTEL)
 #   3. Generates openclaw.json from template
-#   4. Installs Quadlet files into ~/.config/containers/systemd/
-#   5. Copies config into the podman volume
+#   4. Generates Pod YAML, ConfigMap YAML, and Secret YAML for .kube Quadlets
+#   5. Installs .kube + generated YAML files into ~/.config/containers/systemd/
 #   6. Pulls the container image
 #   7. Enables lingering + reloads systemd (does NOT start the agent)
 #
@@ -54,6 +54,11 @@ log_success() { echo -e "${GREEN}✅ $1${NC}"; }
 log_warn()    { echo -e "${YELLOW}⚠️  $1${NC}"; }
 log_error()   { echo -e "${RED}❌ $1${NC}"; }
 
+# Helper: indent content for YAML block scalar embedding
+indent_yaml() {
+  sed 's/^/    /'
+}
+
 # ── Uninstall ──────────────────────────────────────────────────────────────
 if $UNINSTALL; then
   echo ""
@@ -67,6 +72,15 @@ if $UNINSTALL; then
   systemctl --user stop otel-collector 2>/dev/null || true
 
   log_info "Removing Quadlet files..."
+  rm -f ~/.config/containers/systemd/openclaw-agent.kube
+  rm -f ~/.config/containers/systemd/openclaw-agent-pod.yaml
+  rm -f ~/.config/containers/systemd/openclaw-agent-config.yaml
+  rm -f ~/.config/containers/systemd/openclaw-agent-secret.yaml
+  rm -f ~/.config/containers/systemd/openclaw-agent-agents.yaml
+  rm -f ~/.config/containers/systemd/otel-collector.kube
+  rm -f ~/.config/containers/systemd/otel-collector-pod.yaml
+  rm -f ~/.config/containers/systemd/otel-collector-config.yaml
+  # Also clean up old .container/.volume files from previous setup
   rm -f ~/.config/containers/systemd/openclaw-agent.container
   rm -f ~/.config/containers/systemd/openclaw-config.volume
   rm -f ~/.config/containers/systemd/otel-collector.container
@@ -76,7 +90,7 @@ if $UNINSTALL; then
   systemctl --user daemon-reload
 
   log_warn "Volume data preserved. To remove all data:"
-  log_warn "  podman volume rm systemd-openclaw-config systemd-otel-collector-config"
+  log_warn "  podman volume rm openclaw-data"
 
   log_success "Uninstalled."
   exit 0
@@ -323,11 +337,19 @@ if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
 import json
 with open('$GENERATED_CONFIG') as f:
     config = json.load(f)
-# Add anthropic provider with empty models list (uses built-in catalog)
+# Add anthropic provider with explicit model + cost data
 config['models']['providers']['anthropic'] = {
     'baseUrl': 'https://api.anthropic.com',
     'api': 'anthropic-messages',
-    'models': []
+    'models': [{
+        'id': 'claude-sonnet-4-6',
+        'name': 'Claude Sonnet 4.6',
+        'reasoning': False,
+        'input': ['text', 'image'],
+        'cost': {'input': 3, 'output': 15, 'cacheRead': 0.3, 'cacheWrite': 3.75},
+        'contextWindow': 200000,
+        'maxTokens': 16384
+    }]
 }
 # Set default agent model to Anthropic, local model as fallback
 config['agents']['defaults']['model'] = {
@@ -346,89 +368,125 @@ with open('$GENERATED_CONFIG', 'w') as f:
 fi
 log_success "Generated config/openclaw.json"
 
+# ── Generate AGENTS.md and agent.json ─────────────────────────────────────
+log_info "Generating agent files..."
+
+AGENT_ENVSUBST_VARS='${AGENT_ID} ${AGENT_NAME} ${HOSTNAME}'
+export HOSTNAME
+
+GENERATED_AGENTS_MD="$EDGE_ROOT/config/AGENTS.md"
+envsubst "$AGENT_ENVSUBST_VARS" < "$EDGE_ROOT/config/AGENTS.md.envsubst" > "$GENERATED_AGENTS_MD"
+
+GENERATED_AGENT_JSON="$EDGE_ROOT/config/agent.json"
+cat > "$GENERATED_AGENT_JSON" <<EOF
+{
+  "name": "$AGENT_ID",
+  "display_name": "$AGENT_NAME",
+  "description": "Edge Linux system observer and administrator",
+  "emoji": "🖥️",
+  "color": "#2ECC71",
+  "capabilities": ["system-diagnostics", "monitoring", "linux-admin"],
+  "tags": ["edge", "linux", "system"],
+  "version": "1.0.0"
+}
+EOF
+
+log_success "Generated config/AGENTS.md and config/agent.json"
+
 # Generate OTEL collector config if enabled
 if [ "$OTEL_ENABLED" = "true" ]; then
   OTEL_ENVSUBST_VARS='${HOSTNAME} ${MLFLOW_OTLP_ENDPOINT} ${MLFLOW_EXPERIMENT_ID} ${MLFLOW_TLS_INSECURE}'
-  export HOSTNAME MLFLOW_OTLP_ENDPOINT MLFLOW_EXPERIMENT_ID MLFLOW_TLS_INSECURE
+  export MLFLOW_OTLP_ENDPOINT MLFLOW_EXPERIMENT_ID MLFLOW_TLS_INSECURE
 
   GENERATED_OTEL_CONFIG="$EDGE_ROOT/config/otel-collector-config.yaml"
   envsubst "$OTEL_ENVSUBST_VARS" < "$EDGE_ROOT/config/otel-collector-config.yaml.envsubst" > "$GENERATED_OTEL_CONFIG"
   log_success "Generated config/otel-collector-config.yaml"
 fi
 
+# ── Generate Kube YAML files ──────────────────────────────────────────────
+log_info "Generating Kube YAML files..."
+
+GENERATED_DIR="$EDGE_ROOT/generated"
+mkdir -p "$GENERATED_DIR"
+
+# --- Pod YAML (envsubst for image name) ---
+export OPENCLAW_IMAGE
+envsubst '${OPENCLAW_IMAGE}' < "$EDGE_ROOT/quadlet/openclaw-agent-pod.yaml.envsubst" > "$GENERATED_DIR/openclaw-agent-pod.yaml"
+
+# --- ConfigMap: openclaw.json (embed generated JSON into YAML) ---
+cat > "$GENERATED_DIR/openclaw-agent-config.yaml" <<CONFIGMAP_EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openclaw-agent-config
+data:
+  openclaw.json: |
+$(cat "$GENERATED_CONFIG" | indent_yaml)
+CONFIGMAP_EOF
+
+# --- ConfigMap: gateway token + API keys (podman doesn't support Secret in --configmap) ---
+export OPENCLAW_GATEWAY_TOKEN ANTHROPIC_API_KEY
+envsubst '${OPENCLAW_GATEWAY_TOKEN} ${ANTHROPIC_API_KEY}' < "$EDGE_ROOT/quadlet/openclaw-agent-secret.yaml.envsubst" > "$GENERATED_DIR/openclaw-agent-secret.yaml"
+
+# --- ConfigMap: AGENTS.md + agent.json (embed into YAML) ---
+cat > "$GENERATED_DIR/openclaw-agent-agents.yaml" <<AGENTS_EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openclaw-agent-agents
+data:
+  AGENTS.md: |
+$(cat "$GENERATED_AGENTS_MD" | indent_yaml)
+  agent.json: |
+$(cat "$GENERATED_AGENT_JSON" | indent_yaml)
+AGENTS_EOF
+
+log_success "Generated openclaw-agent Pod YAML, ConfigMap, Secret, and Agents"
+
+# --- OTEL collector (if enabled) ---
+if [ "$OTEL_ENABLED" = "true" ]; then
+  export OTEL_COLLECTOR_IMAGE
+  envsubst '${OTEL_COLLECTOR_IMAGE}' < "$EDGE_ROOT/quadlet/otel-collector-pod.yaml.envsubst" > "$GENERATED_DIR/otel-collector-pod.yaml"
+
+  cat > "$GENERATED_DIR/otel-collector-config.yaml" <<OTEL_CM_EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+data:
+  config.yaml: |
+$(cat "$GENERATED_OTEL_CONFIG" | indent_yaml)
+OTEL_CM_EOF
+
+  log_success "Generated otel-collector Pod YAML and ConfigMap"
+fi
+
 # ── Install Quadlet files ─────────────────────────────────────────────────
 log_info "Installing Quadlet files..."
 
-# Substitute the image and token into the container file
-CONTAINER_FILE="$EDGE_ROOT/quadlet/openclaw-agent.container"
-GENERATED_CONTAINER="/tmp/openclaw-agent.container"
-sed \
-  -e "s|Image=.*|Image=$OPENCLAW_IMAGE|" \
-  -e "s|\${OPENCLAW_GATEWAY_TOKEN}|$OPENCLAW_GATEWAY_TOKEN|" \
-  "$CONTAINER_FILE" > "$GENERATED_CONTAINER"
+# Remove old .container/.volume files if they exist (migration from previous setup)
+rm -f "$QUADLET_DIR/openclaw-agent.container"
+rm -f "$QUADLET_DIR/openclaw-config.volume"
+rm -f "$QUADLET_DIR/otel-collector.container"
+rm -f "$QUADLET_DIR/otel-collector-config.volume"
 
-# Add API key as env var (not in config JSON — sanitized from exec sandbox)
-if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-  sed -i "/^Environment=NODE_ENV/a Environment=ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" "$GENERATED_CONTAINER"
-fi
+# Install .kube file (static, no substitution needed)
+cp "$EDGE_ROOT/quadlet/openclaw-agent.kube" "$QUADLET_DIR/openclaw-agent.kube"
 
-cp "$GENERATED_CONTAINER" "$QUADLET_DIR/openclaw-agent.container"
-cp "$EDGE_ROOT/quadlet/openclaw-config.volume" "$QUADLET_DIR/openclaw-config.volume"
-rm -f "$GENERATED_CONTAINER"
+# Install generated YAML files alongside the .kube file
+cp "$GENERATED_DIR/openclaw-agent-pod.yaml" "$QUADLET_DIR/openclaw-agent-pod.yaml"
+cp "$GENERATED_DIR/openclaw-agent-config.yaml" "$QUADLET_DIR/openclaw-agent-config.yaml"
+cp "$GENERATED_DIR/openclaw-agent-secret.yaml" "$QUADLET_DIR/openclaw-agent-secret.yaml"
+cp "$GENERATED_DIR/openclaw-agent-agents.yaml" "$QUADLET_DIR/openclaw-agent-agents.yaml"
 
 # Install OTEL collector Quadlet if enabled
 if [ "$OTEL_ENABLED" = "true" ]; then
-  OTEL_CONTAINER_FILE="$EDGE_ROOT/quadlet/otel-collector.container"
-  GENERATED_OTEL_CONTAINER="/tmp/otel-collector.container"
-  sed \
-    -e "s|\${OTEL_COLLECTOR_IMAGE}|$OTEL_COLLECTOR_IMAGE|" \
-    "$OTEL_CONTAINER_FILE" > "$GENERATED_OTEL_CONTAINER"
-
-  cp "$GENERATED_OTEL_CONTAINER" "$QUADLET_DIR/otel-collector.container"
-  cp "$EDGE_ROOT/quadlet/otel-collector-config.volume" "$QUADLET_DIR/otel-collector-config.volume"
-  rm -f "$GENERATED_OTEL_CONTAINER"
+  cp "$EDGE_ROOT/quadlet/otel-collector.kube" "$QUADLET_DIR/otel-collector.kube"
+  cp "$GENERATED_DIR/otel-collector-pod.yaml" "$QUADLET_DIR/otel-collector-pod.yaml"
+  cp "$GENERATED_DIR/otel-collector-config.yaml" "$QUADLET_DIR/otel-collector-config.yaml"
 fi
 
 log_success "Installed Quadlet files to $QUADLET_DIR/"
-
-# ── Copy config into volume ───────────────────────────────────────────────
-log_info "Setting up config volume..."
-
-# Create the volume if it doesn't exist
-podman volume inspect systemd-openclaw-config &>/dev/null || \
-  podman volume create systemd-openclaw-config
-
-# Get the volume mount path
-VOLUME_PATH=$(podman volume inspect systemd-openclaw-config --format '{{.Mountpoint}}')
-
-# Copy config into the volume and fix ownership for rootless container (uid 1000)
-podman unshare bash -c "mkdir -p '$VOLUME_PATH' && cp '$GENERATED_CONFIG' '$VOLUME_PATH/openclaw.json' && chown -R 1000:1000 '$VOLUME_PATH'"
-
-# SELinux: relabel for container access
-if [ "$SELINUX_STATUS" = "Enforcing" ] || [ "$SELINUX_STATUS" = "Permissive" ]; then
-  # Rootless podman handles most labeling, but explicit relabel ensures access
-  chcon -R -t container_file_t "$VOLUME_PATH" 2>/dev/null || true
-  log_success "SELinux labels applied to volume"
-fi
-
-log_success "Config installed to $VOLUME_PATH/openclaw.json"
-
-# Set up OTEL collector config volume if enabled
-if [ "$OTEL_ENABLED" = "true" ]; then
-  log_info "Setting up OTEL collector config volume..."
-
-  podman volume inspect systemd-otel-collector-config &>/dev/null || \
-    podman volume create systemd-otel-collector-config
-
-  OTEL_VOLUME_PATH=$(podman volume inspect systemd-otel-collector-config --format '{{.Mountpoint}}')
-  podman unshare bash -c "mkdir -p '$OTEL_VOLUME_PATH' && cp '$GENERATED_OTEL_CONFIG' '$OTEL_VOLUME_PATH/config.yaml'"
-
-  if [ "$SELINUX_STATUS" = "Enforcing" ] || [ "$SELINUX_STATUS" = "Permissive" ]; then
-    chcon -R -t container_file_t "$OTEL_VOLUME_PATH" 2>/dev/null || true
-  fi
-
-  log_success "OTEL collector config installed to $OTEL_VOLUME_PATH/config.yaml"
-fi
 
 # ── Pull images ────────────────────────────────────────────────────────────
 log_info "Pulling container images (this may take a moment)..."
@@ -492,11 +550,12 @@ echo "  Collector:    $OTEL_COLLECTOR_IMAGE"
 fi
 echo "  Gateway port: 18789 (loopback only)"
 echo ""
-echo "  Quadlet files:  $QUADLET_DIR/openclaw-agent.{container,volume}"
+echo "  Quadlet files:  $QUADLET_DIR/openclaw-agent.kube"
+echo "                  $QUADLET_DIR/openclaw-agent-{pod,config,secret,agents}.yaml"
 if [ "$OTEL_ENABLED" = "true" ]; then
-echo "                  $QUADLET_DIR/otel-collector.{container,volume}"
+echo "                  $QUADLET_DIR/otel-collector.kube"
+echo "                  $QUADLET_DIR/otel-collector-{pod,config}.yaml"
 fi
-echo "  Config:         $VOLUME_PATH/openclaw.json"
 echo "  Saved settings: $ENV_FILE"
 echo ""
 echo "  Commands:"

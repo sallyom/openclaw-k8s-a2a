@@ -1,4 +1,4 @@
-# ~/.config/containers/systemd/otel-collector.container
+# ~/.config/containers/systemd/otel-collector.kube
 #
 # OpenTelemetry Collector — receives traces from the local OpenClaw agent
 # and forwards them to the central MLflow instance on OpenShift.
@@ -9,19 +9,9 @@
 [Unit]
 Description=OpenTelemetry Collector (Edge)
 
-[Container]
-Image=${OTEL_COLLECTOR_IMAGE}
-ContainerName=otel-collector
-
-# Collector config mounted from volume
-Volume=otel-collector-config.volume:/etc/otelcol:Z
-
-# Host networking so it can receive from localhost:4318
-# and reach the external MLflow route
-Network=host
-
-# Use the mounted config
-Exec=--config /etc/otelcol/config.yaml
+[Kube]
+Yaml=otel-collector-pod.yaml
+ConfigMap=otel-collector-config.yaml
 
 [Service]
 Restart=always

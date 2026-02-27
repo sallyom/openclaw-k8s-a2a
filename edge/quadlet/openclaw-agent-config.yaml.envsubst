@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openclaw-agent-config
+data:
+  openclaw.json: |
+    ${OPENCLAW_JSON_CONTENT}

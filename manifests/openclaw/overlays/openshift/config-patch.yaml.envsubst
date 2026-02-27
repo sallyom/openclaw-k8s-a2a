@@ -30,6 +30,7 @@ data:
         "otel": {
           "enabled": true,
           "endpoint": "http://localhost:4318",
+          "captureContent": true,
           "traces": true,
           "metrics": true,
           "logs": false

@@ -1,7 +1,0 @@
-# ~/.config/containers/systemd/openclaw-config.volume
-#
-# Named volume for OpenClaw config, workspace, and session history.
-# Persists across agent start/stop cycles.
-# SELinux :Z labeling is applied in the .container file.
-
-[Volume]

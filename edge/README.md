@@ -4,7 +4,7 @@ Deploy OpenClaw as a rootless podman Quadlet on a Linux machine (Fedora, RHEL 9+
 
 ## Prerequisites
 
-- podman (Quadlet support)
+- podman (Quadlet support, 4.4+)
 - systemd
 - SELinux enforcing (recommended)
 - A local LLM endpoint (e.g., [RHEL Lightspeed](https://www.redhat.com/en/blog/use-rhel-command-line-assistant-offline-new-developer-preview) on port 8888, ollama, vllm)
@@ -20,10 +20,11 @@ cd openclaw-infra/edge
 The script will:
 1. Verify prerequisites (podman, systemd, SELinux)
 2. Prompt for agent identity, model endpoint, and OTEL config
-3. Install Quadlet files to `~/.config/containers/systemd/`
-4. Pull container images (rootless)
-5. Enable lingering (`loginctl enable-linger`) so services survive logout
-6. Register systemd user units (without starting them)
+3. Generate Pod YAML, ConfigMaps, and Secrets from templates
+4. Install `.kube` Quadlet files to `~/.config/containers/systemd/`
+5. Pull container images (rootless)
+6. Enable lingering (`loginctl enable-linger`) so services survive logout
+7. Register systemd user units (without starting them)
 
 ## Start / Stop
 
@@ -48,21 +49,48 @@ The agent is configured with `Restart=no` — it stays stopped until explicitly 
 
 ```
 ~/.config/containers/systemd/
-├── openclaw-agent.container          # OpenClaw gateway + agent
-├── openclaw-config.volume            # Config, workspace, session history
-├── otel-collector.container          # OTEL collector (if enabled)
-└── otel-collector-config.volume      # Collector config (if enabled)
+├── openclaw-agent.kube                # Quadlet unit (references Pod YAML + ConfigMaps)
+├── openclaw-agent-pod.yaml            # Pod spec (init container + agent container)
+├── openclaw-agent-config.yaml         # ConfigMap: openclaw.json
+├── openclaw-agent-secret.yaml         # Secret: gateway token, API keys
+├── openclaw-agent-agents.yaml         # ConfigMap: AGENTS.md, agent.json
+├── otel-collector.kube                # Quadlet unit (if OTEL enabled)
+├── otel-collector-pod.yaml            # Pod spec for collector (if OTEL enabled)
+└── otel-collector-config.yaml         # ConfigMap: collector config (if OTEL enabled)
+```
+
+### Template Sources
+
+```
+edge/quadlet/
+├── openclaw-agent.kube                    # Static .kube Quadlet (copied as-is)
+├── openclaw-agent-pod.yaml.envsubst       # Pod YAML template
+├── openclaw-agent-config.yaml.envsubst    # ConfigMap template (openclaw.json)
+├── openclaw-agent-secret.yaml.envsubst    # Secret template
+├── openclaw-agent-agents.yaml.envsubst    # ConfigMap template (AGENTS.md, agent.json)
+├── otel-collector.kube                    # Static .kube Quadlet (copied as-is)
+├── otel-collector-pod.yaml.envsubst       # Pod YAML template
+└── otel-collector-config.yaml.envsubst    # ConfigMap template (collector config)
+
+edge/config/
+├── openclaw.json.envsubst                 # Gateway config template
+├── otel-collector-config.yaml.envsubst    # Collector config template
+└── AGENTS.md.envsubst                     # Edge agent system prompt template
 ```
 
 ## Components
 
 ### OpenClaw Agent
 
-Runs the same container image as OpenShift (`quay.io/sallyom/openclaw:latest`). Uses `Network=host` so it can reach local services. The agent has an allowlisted set of system commands it can execute:
+Runs the same container image as OpenShift (`quay.io/sallyom/openclaw:latest`). Uses `hostNetwork: true` so it can reach local services. The agent has an allowlisted set of system commands it can execute:
 
 `df`, `free`, `ps`, `uptime`, `uname`, `hostname`, `cat`, `grep`, `ls`, `wc`, `date`, `findmnt`, `lsblk`
 
-This is a minimal read-only default.
+This is a minimal read-only default. An init container copies `openclaw.json`, `AGENTS.md`, and `agent.json` from ConfigMaps into the persistent volume on each startup, matching the OpenShift deployment pattern.
+
+### Agent Files
+
+The edge agent gets a system prompt (`AGENTS.md`) and metadata (`agent.json`) delivered via ConfigMap, the same way the OpenShift deployment delivers agent configurations. The prompt defines the agent's role as a Linux system observer with the available tool allowlist.
 
 ### Local LLM (RHEL Lightspeed)
 
@@ -70,9 +98,13 @@ The default model endpoint is `http://127.0.0.1:8888/v1`, served by RHEL Lightsp
 
 ### OTEL Collector (Optional)
 
-When enabled, a local OpenTelemetry collector receives traces from the agent on `127.0.0.1:4318` and forwards them to the central MLflow instance on OpenShift. Uses the Red Hat distributed tracing collector image (`ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib`).
+When enabled, a local OpenTelemetry collector receives traces from the agent on `127.0.0.1:4318` and forwards them to the central MLflow instance on OpenShift. Uses the OTel collector contrib image (`ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib`).
 
 Traces are enriched with `host.name` and `deployment.environment: edge` attributes for filtering in MLflow.
+
+### Secrets
+
+API keys and tokens are stored in a Kubernetes Secret YAML (base64-encoded), referenced by the Pod YAML via `secretKeyRef`. This replaces the previous approach of `sed`-injecting secrets into `.container` files.
 
 ## Re-running Setup
 
@@ -84,10 +116,10 @@ The script saves configuration to `.env.edge`. On subsequent runs, it detects ex
 ./scripts/setup-edge.sh --uninstall
 ```
 
-This stops services, removes Quadlet files, and reloads systemd. Volume data is preserved — to remove it:
+This stops services, removes all Quadlet and YAML files, and reloads systemd. Volume data is preserved — to remove it:
 
 ```bash
-podman volume rm systemd-openclaw-config systemd-otel-collector-config
+podman volume rm openclaw-data
 ```
 
 ## Architecture
