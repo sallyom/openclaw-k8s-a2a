@@ -11,9 +11,9 @@ Reference manifests for deploying [vLLM](https://docs.vllm.ai/) as an in-cluster
 ## Deploy
 
 ```bash
-kubectl apply -k manifests/openclaw/llm/
+kubectl apply -k agents/openclaw/llm/
 # or
-oc apply -k manifests/openclaw/llm/
+oc apply -k agents/openclaw/llm/
 ```
 
 This creates:

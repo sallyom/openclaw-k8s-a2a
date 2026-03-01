@@ -152,7 +152,7 @@ Edge agents support multiple model providers:
 |----------|-------------|
 | **RHEL Lightspeed** (default) | Local LLM via [RamaLama + llama.cpp](https://www.redhat.com/en/blog/use-rhel-command-line-assistant-offline-new-developer-preview). Phi-4-mini (Q4_K_M, ~2.4GB) on CPU, no GPU required. Endpoint: `http://127.0.0.1:8888/v1`. Includes RAG database with RHEL documentation. |
 | **Anthropic** (optional) | Claude Sonnet 4.6 via `https://api.anthropic.com`. Requires API key. |
-| **Central vLLM** | In-cluster GPU model server on OpenShift. See [`manifests/openclaw/llm/`](../manifests/openclaw/llm/). |
+| **Central vLLM** | In-cluster GPU model server on OpenShift. See [`agents/openclaw/llm/`](../agents/openclaw/llm/). |
 
 The setup script (`edge/scripts/setup-edge.sh`) defaults to RHEL Lightspeed
 and optionally adds Anthropic when an API key is provided.

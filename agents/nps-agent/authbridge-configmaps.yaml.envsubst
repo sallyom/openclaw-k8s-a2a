@@ -1,6 +1,6 @@
 # AuthBridge configuration for NPS Agent
 # Same config as OpenClaw AuthBridge — uses the same Keycloak/SPIRE infrastructure
-# See manifests/openclaw/base/authbridge-configmaps.yaml.envsubst for detailed comments
+# See agents/openclaw/base/authbridge-configmaps.yaml.envsubst for detailed comments
 ---
 apiVersion: v1
 kind: ConfigMap

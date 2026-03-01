@@ -48,7 +48,7 @@ This split works well with small models — the CronJob handles the complex K8s 
 
 **Demo workloads:**
 - `setup-agents.sh` creates the `resource-demo` namespace and deploys sample workloads for the agent to analyze
-- Manifests at `manifests/openclaw/agents/demo-workloads/`
+- Manifests at `agents/openclaw/agents/demo-workloads/`
 
 ### MLOps Monitor
 
@@ -140,7 +140,7 @@ The default agent has an **nps** skill installed at `~/.openclaw/skills/nps/SKIL
 
 | Agent | Directory | Status |
 |-------|-----------|--------|
-| Audit Reporter | `manifests/openclaw/agents/audit-reporter/` | Planned |
+| Audit Reporter | `agents/openclaw/agents/audit-reporter/` | Planned |
 
 ## Cron Jobs
 
@@ -188,12 +188,12 @@ Model priority during setup (auto-detected):
 | `scripts/setup-agents.sh` | Agent deployment script (all agents + skills) |
 | `scripts/setup-nps-agent.sh` | NPS Agent deployment script (separate namespace) |
 | `scripts/update-jobs.sh` | Cron job quick-update script |
-| `manifests/openclaw/agents/shadowman/` | Default agent config (customizable name) |
-| `manifests/openclaw/agents/resource-optimizer/` | Resource optimizer agent, RBAC, CronJob |
-| `manifests/openclaw/agents/mlops-monitor/` | MLOps monitor agent, RBAC, CronJob |
-| `manifests/openclaw/skills/nps/SKILL.md` | NPS Agent query skill for default agent |
-| `manifests/openclaw/agents/agents-config-patch.yaml.envsubst` | Config overlay adding agent definitions |
-| `manifests/nps-agent/` | NPS Agent deployment (A2A bridge, AuthBridge, eval) |
-| `manifests/nps-agent/nps-agent-eval.yaml` | Eval script ConfigMap (6 test cases) |
-| `manifests/nps-agent/nps-agent-eval-job.yaml.envsubst` | Eval CronJob (weekly + on-demand) |
-| `manifests/nps-agent/npsagent-patch.yaml` | vLLM compatibility patch (ChatCompletions) |
+| `agents/openclaw/agents/shadowman/` | Default agent config (customizable name) |
+| `agents/openclaw/agents/resource-optimizer/` | Resource optimizer agent, RBAC, CronJob |
+| `agents/openclaw/agents/mlops-monitor/` | MLOps monitor agent, RBAC, CronJob |
+| `agents/openclaw/skills/nps/SKILL.md` | NPS Agent query skill for default agent |
+| `agents/openclaw/agents/agents-config-patch.yaml.envsubst` | Config overlay adding agent definitions |
+| `agents/nps-agent/` | NPS Agent deployment (A2A bridge, AuthBridge, eval) |
+| `agents/nps-agent/nps-agent-eval.yaml` | Eval script ConfigMap (6 test cases) |
+| `agents/nps-agent/nps-agent-eval-job.yaml.envsubst` | Eval CronJob (weekly + on-demand) |
+| `agents/nps-agent/npsagent-patch.yaml` | vLLM compatibility patch (ChatCompletions) |

@@ -78,7 +78,7 @@ curl -s -H "Authorization: Bearer $OC_TOKEN" \
 ### resource-optimizer (Read resource-demo namespace)
 
 ```bash
-cd /Users/somalley/git/ambient-code/ocm-guardrails/manifests/openclaw/agents
+cd /Users/somalley/git/ambient-code/openclaw-infra/agents/openclaw/agents
 
 # Create RBAC and inject token
 ./setup-resource-optimizer-rbac.sh

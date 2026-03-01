@@ -245,6 +245,7 @@ if $_ENV_REUSE; then
   GOOGLE_CLOUD_PROJECT="${GOOGLE_CLOUD_PROJECT:-}"
   GOOGLE_CLOUD_LOCATION="${GOOGLE_CLOUD_LOCATION:-}"
   VERTEX_SA_JSON_PATH="${VERTEX_SA_JSON_PATH:-}"
+  MLFLOW_TRACKING_URI="${MLFLOW_TRACKING_URI:-}"
   # A2A_ENABLED already restored from CLI flag above
 
   # If the gateway token is missing, the .env is corrupted — regenerate it
@@ -351,6 +352,18 @@ else
   fi
   echo ""
 
+  # Prompt for MLflow tracking URI (optional — for observability / mlops-monitor agent)
+  log_info "MLflow tracking URI (optional, for trace observability and mlops-monitor agent):"
+  log_info "  Example: https://mlflow-openclaw.apps.example.com"
+  read -p "  MLflow URI (or press Enter to skip): " MLFLOW_TRACKING_URI
+  MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-}
+  if [ -n "$MLFLOW_TRACKING_URI" ]; then
+    log_success "MLflow URI: $MLFLOW_TRACKING_URI"
+  else
+    log_info "Skipped — mlops-monitor will need this configured later via setup-agents.sh"
+  fi
+  echo ""
+
 fi
 
 # Warn about old manifests-private/ directory
@@ -360,9 +373,6 @@ if [ -d "$REPO_ROOT/manifests-private" ]; then
   echo "    rm -rf $REPO_ROOT/manifests-private"
   echo ""
 fi
-
-# Default MLflow URI (may not have been set on fresh runs)
-MLFLOW_TRACKING_URI="${MLFLOW_TRACKING_URI:-}"
 
 # Write .env file
 log_info "Writing .env file..."
@@ -450,9 +460,11 @@ else
   OPENCLAW_OVERLAY="$REPO_ROOT/agents/openclaw/overlays/openshift"
 fi
 
-# A2A injection is controlled by kagenti.io/inject label on the pod template.
-# The kagenti-webhook reads this label and injects AIB sidecars automatically.
-# When A2A is disabled, we patch the label to "disabled" so the webhook skips injection.
+# A2A sidecars (proxy-init, spiffe-helper, client-registration, envoy-proxy) are defined
+# manually in the deployment manifest (not webhook-injected) so we control port exclusions.
+# kagenti.io/inject is set to "disabled" in the base deployment to prevent the webhook from
+# injecting duplicate sidecars. The AgentCard CR is still applied for Kagenti UI discovery.
+# When A2A is disabled, we also remove the AgentCard and SCC from kustomize output.
 if [ "$A2A_ENABLED" != "true" ]; then
   log_info "A2A disabled (use --with-a2a to enable). Setting kagenti.io/inject=disabled..."
   cat >> "$OPENCLAW_OVERLAY/kustomization.yaml" <<'DISABLE_AIB'
@@ -489,17 +501,22 @@ if [ "$A2A_ENABLED" != "true" ]; then
       metadata:
         name: openclaw-authbridge
 DISABLE_AIB
-  log_success "A2A injection disabled via kagenti.io/inject label"
+  log_success "A2A disabled — AIB sidecars, AgentCard, and SCC removed"
 else
-  log_info "A2A enabled — kagenti-webhook will inject AIB sidecars"
+  log_info "A2A enabled — manual AIB sidecars in deployment manifest"
 fi
 echo ""
 
 # Create namespace
 log_info "Creating namespace..."
 $KUBECTL create namespace "$OPENCLAW_NAMESPACE" --dry-run=client -o yaml | $KUBECTL apply -f - > /dev/null
+# The kagenti-enabled label is set by setup-kagenti.sh (via agentNamespaces in helm values).
+# It triggers Kagenti to create AuthBridge ConfigMaps in the namespace.
+# We remove it here to prevent the webhook from mutating our Deployment — we define
+# AIB sidecars manually to control proxy-init port exclusions.
+# The ConfigMaps persist after label removal.
 if [ "$A2A_ENABLED" = "true" ]; then
-  $KUBECTL label namespace "$OPENCLAW_NAMESPACE" kagenti-enabled=true --overwrite > /dev/null
+  $KUBECTL label namespace "$OPENCLAW_NAMESPACE" kagenti-enabled- --overwrite > /dev/null 2>&1 || true
 fi
 $KUBECTL annotate namespace "$OPENCLAW_NAMESPACE" \
   "openclaw.dev/owner=$OPENCLAW_PREFIX" \
@@ -579,6 +596,12 @@ else
 fi
 $KUBECTL apply -k "$OPENCLAW_OVERLAY"
 log_success "OpenClaw deployed with enterprise security"
+
+# Fix proxy-init port exclusions for OpenShift with A2A.
+# The Kagenti webhook injects proxy-init with OUTBOUND_PORTS_EXCLUDE="8080" (Kind default)
+# and no INBOUND_PORTS_EXCLUDE. On OpenShift we need two fixes:
+
+
 echo ""
 
 # Install A2A skill (only when A2A is enabled)

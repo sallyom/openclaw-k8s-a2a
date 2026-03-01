@@ -100,7 +100,7 @@ Scaffold a new agent with one command:
 
 It prompts for an ID, display name, description, emoji, and color, then generates the agent files from a template. It also prints the JSON snippet to register the agent in the config.
 
-For the full template reference and manual setup, see [manifests/openclaw/agents/_template/README.md](../manifests/openclaw/agents/_template/README.md).
+For the full template reference and manual setup, see [agents/openclaw/agents/_template/README.md](../agents/openclaw/agents/_template/README.md).
 
 ## Add a Scheduled Job
 

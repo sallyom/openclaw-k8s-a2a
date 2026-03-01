@@ -15,8 +15,8 @@ This scaffolds the files and prints the registration snippet. Or do it manually:
 ### 1. Copy the template
 
 ```bash
-cp -r manifests/openclaw/agents/_template manifests/openclaw/agents/myagent
-cd manifests/openclaw/agents/myagent
+cp -r agents/openclaw/agents/_template agents/openclaw/agents/myagent
+cd agents/openclaw/agents/myagent
 mv agent.yaml.template myagent-agent.yaml.envsubst
 ```
 
@@ -37,7 +37,7 @@ that tells the agent who it is and what to do.
 
 ### 3. Register the agent
 
-Add this to `manifests/openclaw/agents/agents-config-patch.yaml.envsubst` in the
+Add this to `agents/openclaw/agents/agents-config-patch.yaml.envsubst` in the
 `agents.list` array:
 
 ```json
@@ -61,8 +61,8 @@ Add this to `manifests/openclaw/agents/agents-config-patch.yaml.envsubst` in the
 To give your agent a scheduled task, create a `JOB.md` in your agent's directory:
 
 ```bash
-cp manifests/openclaw/agents/_template/JOB.md.template \
-   manifests/openclaw/agents/myagent/JOB.md
+cp agents/openclaw/agents/_template/JOB.md.template \
+   agents/openclaw/agents/myagent/JOB.md
 ```
 
 Edit the frontmatter:

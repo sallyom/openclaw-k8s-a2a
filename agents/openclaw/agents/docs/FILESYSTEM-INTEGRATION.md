@@ -77,7 +77,7 @@ mkdir -p /home/node/.openclaw/agents/shadowman/sessions  # ✅
 
 ### Fix 1: Updated `setup-agents.sh`
 
-**File**: `manifests/openclaw/agents/setup-agents.sh`
+**File**: `agents/openclaw/agents/setup-agents.sh`
 
 **Changes**:
 ```bash
@@ -96,7 +96,7 @@ chmod -R 775 ~/.openclaw/agents
 
 ### Fix 2: Updated Deployment Init Container
 
-**File**: `manifests/openclaw/base/openclaw-deployment.yaml`
+**File**: `agents/openclaw/base/openclaw-deployment.yaml`
 
 **Changes**:
 ```bash
@@ -153,7 +153,7 @@ mkdir -p /home/node/.openclaw/agents/mlops_monitor/sessions
 
 ## Volume Mount Configuration (✅ Already Correct)
 
-**Deployment**: `manifests/openclaw/base/openclaw-deployment.yaml`
+**Deployment**: `agents/openclaw/base/openclaw-deployment.yaml`
 
 ```yaml
 volumeMounts:

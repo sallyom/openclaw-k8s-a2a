@@ -115,11 +115,8 @@ openclaw-infra/
 │   │   ├── skills/                     # Agent skills (A2A, NPS)
 │   │   ├── edge/                       # OpenClaw Quadlet files, config templates, setup-edge.sh
 │   │   └── llm/                        # vLLM reference deployment (GPU model server)
+│   ├── nps-agent/                      # NPS Agent (separate namespace, own identity)
 │   └── _template/                      # Skeleton for new agent implementations
-│
-├── manifests/
-│   ├── a2a-infra/                      # Legacy SPIRE + Keycloak (now managed by Kagenti)
-│   └── nps-agent/                      # NPS Agent (separate namespace)
 │
 ├── scripts/                            # Deployment and management scripts
 ├── docs/                               # Architecture and reference docs
