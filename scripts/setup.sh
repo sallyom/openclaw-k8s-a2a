@@ -430,10 +430,9 @@ export TELEGRAM_ALLOW_FROM="${TELEGRAM_ALLOW_FROM:-}"
 # VERTEX_PROVIDER controls which Vertex provider: "anthropic" or "google" (default)
 export VERTEX_PROVIDER="${VERTEX_PROVIDER:-google}"
 if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-  export DEFAULT_AGENT_MODEL="anthropic/claude-sonnet-4-5"
+  export DEFAULT_AGENT_MODEL="anthropic/claude-sonnet-4-6"
 elif [ "${VERTEX_ENABLED:-}" = "true" ] && [ "${VERTEX_PROVIDER}" = "anthropic" ]; then
-  # TODO: upgrade to "anthropic-vertex/claude-sonnet-4-6" when SA has access to 4.6 models
-  export DEFAULT_AGENT_MODEL="anthropic-vertex/claude-sonnet-4-5@20250929"
+  export DEFAULT_AGENT_MODEL="anthropic-vertex/claude-sonnet-4-6"
   log_info "Using Anthropic Vertex (Claude via GCP) as default agent model"
 elif [ "${VERTEX_ENABLED:-}" = "true" ]; then
   export DEFAULT_AGENT_MODEL="google-vertex/gemini-2.5-pro"
@@ -553,9 +552,14 @@ echo ""
 # TODO: Remove once kagenti upstream includes these keys (PR: kagenti/kagenti#charts-clustername-fix).
 if [ "$A2A_ENABLED" = "true" ]; then
   log_info "Patching environments ConfigMap with Keycloak keys..."
+  # Read actual Keycloak admin credentials from the secret created by the RHBK operator.
+  # The RHBK operator creates a bootstrap admin user (e.g. "temp-admin") with a random password,
+  # NOT the default "admin/admin". The client-registration sidecar needs these to register clients.
+  KC_ADMIN_USER=$($KUBECTL get secret keycloak-initial-admin -n keycloak -o jsonpath='{.data.username}' 2>/dev/null | base64 -d) || KC_ADMIN_USER="admin"
+  KC_ADMIN_PASS=$($KUBECTL get secret keycloak-initial-admin -n keycloak -o jsonpath='{.data.password}' 2>/dev/null | base64 -d) || KC_ADMIN_PASS="admin"
   $KUBECTL patch configmap environments -n "$OPENCLAW_NAMESPACE" --type merge -p \
-    '{"data":{"KEYCLOAK_REALM":"demo","KEYCLOAK_URL":"http://keycloak-service.keycloak.svc.cluster.local:8080","KEYCLOAK_ADMIN_USERNAME":"admin","KEYCLOAK_ADMIN_PASSWORD":"admin","KEYCLOAK_TOKEN_EXCHANGE_ENABLED":"true","KEYCLOAK_CLIENT_REGISTRATION_ENABLED":"true","SPIRE_ENABLED":"true"}}' \
-    2>/dev/null && log_success "Keycloak keys added to environments ConfigMap" \
+    "{\"data\":{\"KEYCLOAK_REALM\":\"demo\",\"KEYCLOAK_URL\":\"http://keycloak-service.keycloak.svc.cluster.local:8080\",\"KEYCLOAK_ADMIN_USERNAME\":\"${KC_ADMIN_USER}\",\"KEYCLOAK_ADMIN_PASSWORD\":\"${KC_ADMIN_PASS}\",\"KEYCLOAK_TOKEN_EXCHANGE_ENABLED\":\"true\",\"KEYCLOAK_CLIENT_REGISTRATION_ENABLED\":\"true\",\"SPIRE_ENABLED\":\"true\"}}" \
+    2>/dev/null && log_success "Keycloak keys added to environments ConfigMap (user: $KC_ADMIN_USER)" \
     || log_warn "Could not patch environments ConfigMap — it may not exist yet. Re-run setup.sh after setup-kagenti.sh completes."
   echo ""
 fi

@@ -251,6 +251,18 @@ log_success "Using tag: v${LATEST_TAG}"
 
 run_cmd helm dependency update "$KAGENTI_REPO/charts/kagenti/"
 
+# Detect Keycloak public URL from route (for OIDC redirects in the browser).
+# The internal URL (keycloak-service.keycloak:8080) is NOT reachable from outside the cluster.
+KC_ROUTE=$($KUBECTL get route keycloak -n keycloak -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+if [ -n "$KC_ROUTE" ]; then
+  KEYCLOAK_PUBLIC_URL="https://${KC_ROUTE}"
+  log_success "Keycloak public URL: $KEYCLOAK_PUBLIC_URL"
+else
+  # Fallback: construct from cluster domain
+  KEYCLOAK_PUBLIC_URL="https://keycloak-keycloak.${DOMAIN}"
+  log_warn "Keycloak route not found — using constructed URL: $KEYCLOAK_PUBLIC_URL"
+fi
+
 run_cmd helm upgrade --install kagenti "$KAGENTI_REPO/charts/kagenti/" \
   -n kagenti-system --create-namespace \
   -f "$SECRETS_FILE" \
@@ -259,7 +271,8 @@ run_cmd helm upgrade --install kagenti "$KAGENTI_REPO/charts/kagenti/" \
   --set "agentNamespaces=${AGENT_NS_HELM}" \
   --set "agentOAuthSecret.spiffePrefix=spiffe://${DOMAIN}/sa" \
   --set uiOAuthSecret.useServiceAccountCA=false \
-  --set agentOAuthSecret.useServiceAccountCA=false
+  --set agentOAuthSecret.useServiceAccountCA=false \
+  --set "keycloak.publicUrl=${KEYCLOAK_PUBLIC_URL}"
 
 log_success "Kagenti installed"
 echo ""
@@ -273,6 +286,13 @@ echo ""
 # Until this is merged upstream, override the webhook image:
 log_info "Step 5b: Override webhook image for port exclusion annotations"
 WEBHOOK_IMAGE="quay.io/sallyom/kagenti-webhook:latest"
+# The Kagenti agent-oauth-secret-job writes KEYCLOAK_ADMIN_* fields to the environments
+# ConfigMaps using the "OpenAPI-Generator" field manager, which conflicts with Helm's
+# server-side apply on subsequent upgrades. Delete the ConfigMaps to let Helm recreate them.
+IFS=',' read -ra NS_ARRAY <<< "${AGENT_NAMESPACES}"
+for ns in "${NS_ARRAY[@]}"; do
+  $KUBECTL delete configmap environments -n "$ns" 2>/dev/null || true
+done
 run_cmd helm upgrade kagenti "$KAGENTI_REPO/charts/kagenti/" \
   --reuse-values \
   --set kagenti-webhook-chart.image.repository=quay.io/sallyom/kagenti-webhook \
