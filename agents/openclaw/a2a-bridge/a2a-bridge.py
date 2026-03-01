@@ -1,0 +1,259 @@
+#!/usr/bin/env python3
+"""A2A-to-OpenAI bridge for Kagenti UI chat.
+
+Translates A2A JSON-RPC (message/send, message/stream) into OpenAI
+chat completions requests against the local OpenClaw gateway, and
+translates the responses back to A2A format.
+
+Also serves /.well-known/agent.json and /.well-known/agent-card.json
+from the mounted ConfigMap directory for Kagenti operator discovery.
+
+Stdlib only -- runs on ubi9:latest with no pip packages.
+"""
+
+import json
+import os
+import uuid
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.request import Request, urlopen
+from urllib.error import URLError, HTTPError
+
+GATEWAY_URL = os.environ.get("GATEWAY_URL", "http://localhost:18789")
+GATEWAY_TOKEN = os.environ.get("GATEWAY_TOKEN", "")
+AGENT_CARD_DIR = os.environ.get("AGENT_CARD_DIR", "/srv/.well-known")
+LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "8080"))
+
+
+def read_agent_card(filename):
+    path = os.path.join(AGENT_CARD_DIR, filename)
+    try:
+        with open(path) as f:
+            return f.read()
+    except FileNotFoundError:
+        return None
+
+
+def call_gateway(messages, stream=False):
+    """POST to the OpenClaw gateway's OpenAI-compatible endpoint."""
+    body = json.dumps({
+        "messages": messages,
+        "stream": stream,
+    }).encode()
+    req = Request(
+        f"{GATEWAY_URL}/v1/chat/completions",
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {GATEWAY_TOKEN}",
+        },
+        method="POST",
+    )
+    return urlopen(req, timeout=300)
+
+
+def extract_text(parts):
+    """Extract concatenated text from A2A message parts."""
+    texts = []
+    for part in parts:
+        if part.get("kind") == "text" and "text" in part:
+            texts.append(part["text"])
+    return "\n".join(texts)
+
+
+def a2a_result(rpc_id, text):
+    """Build an A2A JSON-RPC success response with a completed task."""
+    return {
+        "jsonrpc": "2.0",
+        "id": rpc_id,
+        "result": {
+            "id": str(uuid.uuid4()),
+            "status": {
+                "state": "completed",
+                "message": {
+                    "role": "agent",
+                    "parts": [{"kind": "text", "text": text}],
+                },
+            },
+        },
+    }
+
+
+def a2a_error(rpc_id, code, message):
+    """Build an A2A JSON-RPC error response."""
+    return {
+        "jsonrpc": "2.0",
+        "id": rpc_id,
+        "error": {"code": code, "message": message},
+    }
+
+
+class A2ABridgeHandler(BaseHTTPRequestHandler):
+    def log_message(self, fmt, *args):
+        print(f"[a2a-bridge] {fmt % args}")
+
+    # --- GET: agent card ---
+
+    def do_GET(self):
+        if self.path in ("/.well-known/agent.json", "/.well-known/agent-card.json"):
+            filename = self.path.rsplit("/", 1)[-1]
+            content = read_agent_card(filename)
+            if content is not None:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(content.encode())
+                return
+            self.send_error(404, f"{filename} not found")
+            return
+
+        if self.path == "/healthz":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"ok")
+            return
+
+        self.send_error(404, "Not found")
+
+    # --- POST: A2A JSON-RPC ---
+
+    def do_POST(self):
+        content_length = int(self.headers.get("Content-Length", 0))
+        raw = self.rfile.read(content_length)
+
+        try:
+            req = json.loads(raw)
+        except json.JSONDecodeError:
+            self._send_json(400, a2a_error(None, -32700, "Parse error"))
+            return
+
+        rpc_id = req.get("id")
+        method = req.get("method", "")
+        params = req.get("params", {})
+        message = params.get("message", {})
+        parts = message.get("parts", [])
+        user_text = extract_text(parts)
+
+        if not user_text:
+            self._send_json(200, a2a_error(rpc_id, -32602, "No text in message parts"))
+            return
+
+        messages = [{"role": "user", "content": user_text}]
+
+        if method == "message/send":
+            self._handle_send(rpc_id, messages)
+        elif method == "message/stream":
+            self._handle_stream(rpc_id, messages)
+        else:
+            self._send_json(200, a2a_error(rpc_id, -32601, f"Unknown method: {method}"))
+
+    def _handle_send(self, rpc_id, messages):
+        try:
+            resp = call_gateway(messages, stream=False)
+            data = json.loads(resp.read())
+            text = data["choices"][0]["message"]["content"]
+            self._send_json(200, a2a_result(rpc_id, text))
+        except (HTTPError, URLError) as e:
+            msg = str(e)
+            if hasattr(e, "read"):
+                msg = e.read().decode(errors="replace")[:500]
+            self._send_json(200, a2a_error(rpc_id, -32000, f"Gateway error: {msg}"))
+        except (KeyError, IndexError) as e:
+            self._send_json(200, a2a_error(rpc_id, -32000, f"Bad gateway response: {e}"))
+
+    def _handle_stream(self, rpc_id, messages):
+        task_id = str(uuid.uuid4())
+        try:
+            resp = call_gateway(messages, stream=True)
+        except (HTTPError, URLError) as e:
+            msg = str(e)
+            if hasattr(e, "read"):
+                msg = e.read().decode(errors="replace")[:500]
+            self._send_json(200, a2a_error(rpc_id, -32000, f"Gateway error: {msg}"))
+            return
+
+        # Start SSE response
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+
+        collected_text = ""
+        try:
+            for line in resp:
+                line = line.decode("utf-8", errors="replace").strip()
+                if not line.startswith("data: "):
+                    continue
+                payload = line[6:]
+                if payload == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(payload)
+                    delta = chunk.get("choices", [{}])[0].get("delta", {})
+                    content = delta.get("content", "")
+                    if content:
+                        collected_text += content
+                        event = {
+                            "jsonrpc": "2.0",
+                            "id": rpc_id,
+                            "result": {
+                                "id": task_id,
+                                "status": {
+                                    "state": "working",
+                                    "message": {
+                                        "role": "agent",
+                                        "parts": [{"kind": "text", "text": content}],
+                                    },
+                                },
+                            },
+                        }
+                        self._write_sse("message/stream", event)
+                except (json.JSONDecodeError, KeyError, IndexError):
+                    continue
+
+            # Send final completed event
+            final_event = {
+                "jsonrpc": "2.0",
+                "id": rpc_id,
+                "result": {
+                    "id": task_id,
+                    "status": {
+                        "state": "completed",
+                        "message": {
+                            "role": "agent",
+                            "parts": [{"kind": "text", "text": collected_text}],
+                        },
+                    },
+                },
+            }
+            self._write_sse("message/stream", final_event)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            resp.close()
+
+    def _write_sse(self, event_type, data):
+        line = f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+        self.wfile.write(line.encode())
+        self.wfile.flush()
+
+    def _send_json(self, status, obj):
+        body = json.dumps(obj).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+if __name__ == "__main__":
+    server = HTTPServer(("0.0.0.0", LISTEN_PORT), A2ABridgeHandler)
+    print(f"[a2a-bridge] Listening on :{LISTEN_PORT}")
+    print(f"[a2a-bridge] Gateway: {GATEWAY_URL}")
+    print(f"[a2a-bridge] Agent cards: {AGENT_CARD_DIR}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    server.server_close()
