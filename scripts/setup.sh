@@ -547,6 +547,19 @@ $KUBECTL annotate namespace "$OPENCLAW_NAMESPACE" \
 log_success "Namespace created: $OPENCLAW_NAMESPACE (owner: $OPENCLAW_PREFIX, agent: $SHADOWMAN_DISPLAY_NAME)"
 echo ""
 
+# Patch environments ConfigMap with Keycloak keys for AIB client-registration sidecar.
+# The Kagenti helm chart creates the 'environments' ConfigMap but doesn't include the
+# individual KEYCLOAK_* keys that the client-registration container expects via configMapKeyRef.
+# TODO: Remove once kagenti upstream includes these keys (PR: kagenti/kagenti#charts-clustername-fix).
+if [ "$A2A_ENABLED" = "true" ]; then
+  log_info "Patching environments ConfigMap with Keycloak keys..."
+  $KUBECTL patch configmap environments -n "$OPENCLAW_NAMESPACE" --type merge -p \
+    '{"data":{"KEYCLOAK_REALM":"demo","KEYCLOAK_URL":"http://keycloak-service.keycloak.svc.cluster.local:8080","KEYCLOAK_ADMIN_USERNAME":"admin","KEYCLOAK_ADMIN_PASSWORD":"admin","KEYCLOAK_TOKEN_EXCHANGE_ENABLED":"true","KEYCLOAK_CLIENT_REGISTRATION_ENABLED":"true","SPIRE_ENABLED":"true"}}' \
+    2>/dev/null && log_success "Keycloak keys added to environments ConfigMap" \
+    || log_warn "Could not patch environments ConfigMap — it may not exist yet. Re-run setup.sh after setup-kagenti.sh completes."
+  echo ""
+fi
+
 # Create Vertex AI credentials secret (if enabled)
 if [ "${VERTEX_ENABLED:-}" = "true" ] && [ -n "${VERTEX_SA_JSON_PATH:-}" ] && [ -f "${VERTEX_SA_JSON_PATH:-}" ]; then
   log_info "Creating Vertex AI credentials secret..."
