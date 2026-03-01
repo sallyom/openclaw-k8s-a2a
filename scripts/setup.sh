@@ -487,11 +487,10 @@ else
   OPENCLAW_OVERLAY="$REPO_ROOT/agents/openclaw/overlays/openshift"
 fi
 
-# A2A sidecars (proxy-init, spiffe-helper, client-registration, envoy-proxy) are defined
-# manually in the deployment manifest (not webhook-injected) so we control port exclusions.
-# kagenti.io/inject is set to "disabled" in the base deployment to prevent the webhook from
-# injecting duplicate sidecars. The AgentCard CR is still applied for Kagenti UI discovery.
-# When A2A is disabled, we also remove the AgentCard and SCC from kustomize output.
+# A2A sidecars are injected by the Kagenti webhook when kagenti.io/inject=enabled
+# (set in the base deployment). Port exclusions are controlled via pod annotations
+# (kagenti.io/outbound-ports-exclude, kagenti.io/inbound-ports-exclude).
+# When A2A is disabled, we patch the inject label to disabled and remove AgentCard + SCC.
 if [ "$A2A_ENABLED" != "true" ]; then
   log_info "A2A disabled (use --with-a2a to enable). Setting kagenti.io/inject=disabled..."
   cat >> "$OPENCLAW_OVERLAY/kustomization.yaml" <<'DISABLE_AIB'
@@ -528,9 +527,9 @@ if [ "$A2A_ENABLED" != "true" ]; then
       metadata:
         name: openclaw-authbridge
 DISABLE_AIB
-  log_success "A2A disabled — AIB sidecars, AgentCard, and SCC removed"
+  log_success "A2A disabled — webhook injection disabled, AgentCard and SCC removed"
 else
-  log_info "A2A enabled — manual AIB sidecars in deployment manifest"
+  log_info "A2A enabled — Kagenti webhook will inject AIB sidecars at admission time"
 fi
 echo ""
 
@@ -538,13 +537,8 @@ echo ""
 log_info "Creating namespace..."
 $KUBECTL create namespace "$OPENCLAW_NAMESPACE" --dry-run=client -o yaml | $KUBECTL apply -f - > /dev/null
 # The kagenti-enabled label is set by setup-kagenti.sh (via agentNamespaces in helm values).
-# It triggers Kagenti to create AuthBridge ConfigMaps in the namespace.
-# We remove it here to prevent the webhook from mutating our Deployment — we define
-# AIB sidecars manually to control proxy-init port exclusions.
-# The ConfigMaps persist after label removal.
-if [ "$A2A_ENABLED" = "true" ]; then
-  $KUBECTL label namespace "$OPENCLAW_NAMESPACE" kagenti-enabled- --overwrite > /dev/null 2>&1 || true
-fi
+# It triggers Kagenti to create AuthBridge ConfigMaps in the namespace and enables
+# webhook injection for pods with kagenti.io/inject=enabled.
 $KUBECTL annotate namespace "$OPENCLAW_NAMESPACE" \
   "openclaw.dev/owner=$OPENCLAW_PREFIX" \
   "openclaw.dev/agent-name=$SHADOWMAN_DISPLAY_NAME" \
@@ -617,17 +611,12 @@ log_info "  ✓ Read-only filesystem"
 log_info "  ✓ Health probes"
 log_info "  ✓ Device authentication"
 if [ "$A2A_ENABLED" = "true" ]; then
-  log_info "  ✓ Kagenti AIB (webhook-injected sidecars)"
+  log_info "  ✓ Kagenti AIB (webhook-injected with port exclusion annotations)"
 else
   log_info "  ○ Kagenti AIB disabled (use --with-a2a to enable)"
 fi
 $KUBECTL apply -k "$OPENCLAW_OVERLAY"
 log_success "OpenClaw deployed with enterprise security"
-
-# Fix proxy-init port exclusions for OpenShift with A2A.
-# The Kagenti webhook injects proxy-init with OUTBOUND_PORTS_EXCLUDE="8080" (Kind default)
-# and no INBOUND_PORTS_EXCLUDE. On OpenShift we need two fixes:
-
 
 echo ""
 
