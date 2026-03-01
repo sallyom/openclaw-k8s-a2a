@@ -60,6 +60,7 @@ spec:
         securityContext:
           runAsUser: 0
           runAsNonRoot: false
+          privileged: true
           capabilities:
             add:
             - NET_ADMIN

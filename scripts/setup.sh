@@ -453,6 +453,33 @@ for tpl in $(find "$REPO_ROOT/agents" "$REPO_ROOT/platform" "$REPO_ROOT/manifest
 done
 echo ""
 
+# Strip Telegram channel config when disabled (empty allowFrom fails validation)
+if [ "${TELEGRAM_ENABLED:-false}" != "true" ]; then
+  for cfg in "$REPO_ROOT/agents/openclaw/overlays"/*/config-patch.yaml; do
+    if [ -f "$cfg" ]; then
+      python3 -c "
+import json, sys
+with open('$cfg') as f:
+    lines = f.readlines()
+# Find the JSON blob inside the YAML (between the first { and last })
+json_start = next(i for i, l in enumerate(lines) if l.strip().startswith('{'))
+json_end = next(i for i in range(len(lines)-1, -1, -1) if lines[i].strip().startswith('}'))
+prefix = lines[:json_start]
+suffix = lines[json_end+1:]
+blob = json.loads(''.join(lines[json_start:json_end+1]))
+blob.pop('channels', None)
+blob.get('settings', {}).pop('channels', None)
+indent = len(lines[json_start]) - len(lines[json_start].lstrip())
+formatted = json.dumps(blob, indent=2)
+# Re-indent to match YAML nesting
+indented = '\n'.join(' ' * indent + l for l in formatted.splitlines()) + '\n'
+with open('$cfg', 'w') as f:
+    f.writelines(prefix + [indented] + suffix)
+" 2>/dev/null && log_success "Stripped Telegram config (disabled)" || true
+    fi
+  done
+fi
+
 # Select overlay based on mode
 if $K8S_MODE; then
   OPENCLAW_OVERLAY="$REPO_ROOT/agents/openclaw/overlays/k8s"
