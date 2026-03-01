@@ -274,7 +274,7 @@ spec:
       # Also serves /.well-known/agent.json and agent-card.json for operator discovery.
       - name: agent-card
         image: registry.redhat.io/ubi9:latest
-        command: ["python3", "/scripts/a2a-bridge.py"]
+        command: ["python3", "-u", "/scripts/a2a-bridge.py"]
         ports:
         - name: a2a
           containerPort: 8080
@@ -286,6 +286,8 @@ spec:
               key: OPENCLAW_GATEWAY_TOKEN
         - name: GATEWAY_URL
           value: "http://localhost:18789"
+        - name: AGENT_ID
+          value: ""
         volumeMounts:
         - name: agent-card-data
           mountPath: /srv/.well-known

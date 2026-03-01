@@ -20,6 +20,7 @@ from urllib.error import URLError, HTTPError
 
 GATEWAY_URL = os.environ.get("GATEWAY_URL", "http://localhost:18789")
 GATEWAY_TOKEN = os.environ.get("GATEWAY_TOKEN", "")
+AGENT_ID = os.environ.get("AGENT_ID", "")
 AGENT_CARD_DIR = os.environ.get("AGENT_CARD_DIR", "/srv/.well-known")
 LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "8080"))
 
@@ -39,13 +40,16 @@ def call_gateway(messages, stream=False):
         "messages": messages,
         "stream": stream,
     }).encode()
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {GATEWAY_TOKEN}",
+    }
+    if AGENT_ID:
+        headers["x-openclaw-agent-id"] = AGENT_ID
     req = Request(
         f"{GATEWAY_URL}/v1/chat/completions",
         data=body,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {GATEWAY_TOKEN}",
-        },
+        headers=headers,
         method="POST",
     )
     return urlopen(req, timeout=300)
@@ -68,7 +72,7 @@ def a2a_result(rpc_id, text):
         "result": {
             "id": str(uuid.uuid4()),
             "status": {
-                "state": "completed",
+                "state": "COMPLETED",
                 "message": {
                     "role": "agent",
                     "parts": [{"kind": "text", "text": text}],
@@ -200,7 +204,7 @@ class A2ABridgeHandler(BaseHTTPRequestHandler):
                             "result": {
                                 "id": task_id,
                                 "status": {
-                                    "state": "working",
+                                    "state": "WORKING",
                                     "message": {
                                         "role": "agent",
                                         "parts": [{"kind": "text", "text": content}],
@@ -219,7 +223,7 @@ class A2ABridgeHandler(BaseHTTPRequestHandler):
                 "result": {
                     "id": task_id,
                     "status": {
-                        "state": "completed",
+                        "state": "COMPLETED",
                         "message": {
                             "role": "agent",
                             "parts": [{"kind": "text", "text": collected_text}],
@@ -251,6 +255,7 @@ if __name__ == "__main__":
     server = HTTPServer(("0.0.0.0", LISTEN_PORT), A2ABridgeHandler)
     print(f"[a2a-bridge] Listening on :{LISTEN_PORT}")
     print(f"[a2a-bridge] Gateway: {GATEWAY_URL}")
+    print(f"[a2a-bridge] Agent: {AGENT_ID or '(default)'}")
     print(f"[a2a-bridge] Agent cards: {AGENT_CARD_DIR}")
     try:
         server.serve_forever()
