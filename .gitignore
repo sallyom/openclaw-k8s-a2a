@@ -31,6 +31,15 @@ manifests-private/
 # Any file or directory with 'private' in the name
 *private*
 
+# Legacy paths from pre-restructure (manifests/ → agents/ + platform/)
+# Teammates may still have generated files here after pulling new main
+manifests/
+edge/config/
+edge/generated/
+edge/.env.edge
+observability/openclaw-otel-sidecar.yaml
+observability/vllm-otel-sidecar.yaml
+
 # Generated from .envsubst templates (setup.sh / setup-edge.sh)
 # Rule: for every foo.yaml.envsubst, foo.yaml is generated and must not be committed.
 # Agent overlays

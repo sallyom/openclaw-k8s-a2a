@@ -269,17 +269,30 @@ spec:
           capabilities:
             drop:
             - ALL
-      # Agent card server — serves /.well-known/agent.json for Kagenti operator discovery.
-      # Temporary until Kagenti webhook injects this or operator reads from CR directly.
+      # A2A bridge — translates Kagenti UI A2A JSON-RPC (message/send, message/stream)
+      # into OpenAI chat completions against the local gateway on :18789.
+      # Also serves /.well-known/agent.json and agent-card.json for operator discovery.
       - name: agent-card
         image: registry.redhat.io/ubi9:latest
-        command: ["python3", "-m", "http.server", "8080", "--directory", "/srv"]
+        command: ["python3", "-u", "/scripts/a2a-bridge.py"]
         ports:
         - name: a2a
           containerPort: 8080
+        env:
+        - name: GATEWAY_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: openclaw-secrets
+              key: OPENCLAW_GATEWAY_TOKEN
+        - name: GATEWAY_URL
+          value: "http://localhost:18789"
+        - name: AGENT_ID
+          value: ""
         volumeMounts:
         - name: agent-card-data
           mountPath: /srv/.well-known
+        - name: a2a-bridge-script
+          mountPath: /scripts
         resources:
           requests:
             memory: 32Mi
@@ -336,5 +349,9 @@ spec:
       - name: agent-card-data
         configMap:
           name: openclaw-agent-card
+      # A2A bridge script (translates A2A JSON-RPC to OpenAI chat completions)
+      - name: a2a-bridge-script
+        configMap:
+          name: a2a-bridge
       # Additional agents can be set up via setup-agents.sh
       # All agent workspaces are at ~/.openclaw/workspace* (inside openclaw-home-pvc)

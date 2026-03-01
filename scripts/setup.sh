@@ -637,7 +637,19 @@ log_success "OpenClaw deployed with enterprise security"
 
 echo ""
 
-# Install A2A skill (only when A2A is enabled)
+# Deploy default agent and skills
+log_info "Setting up default agent (${SHADOWMAN_DISPLAY_NAME})..."
+
+# Apply shadowman agent ConfigMap (envsubst already ran on the template)
+SHADOWMAN_YAML="$REPO_ROOT/agents/openclaw/agents/shadowman/shadowman-agent.yaml"
+if [ -f "$SHADOWMAN_YAML" ]; then
+  $KUBECTL apply -f "$SHADOWMAN_YAML"
+  log_success "Default agent ConfigMap deployed"
+else
+  log_warn "shadowman-agent.yaml not found — run envsubst or setup-agents.sh"
+fi
+
+# Install A2A skill ConfigMap (NPS skill is deployed by setup-agents.sh with NPS agent)
 if [ "$A2A_ENABLED" = "true" ]; then
   log_info "Installing A2A skill..."
   SKILLS_DIR="$REPO_ROOT/agents/openclaw/skills"
@@ -645,24 +657,40 @@ if [ "$A2A_ENABLED" = "true" ]; then
     | sed "s/namespace: openclaw/namespace: $OPENCLAW_NAMESPACE/g" \
     | $KUBECTL apply -f -
   log_success "A2A skill ConfigMap deployed"
+fi
 
-  # Wait for pod to be ready before copying skill into workspace
-  log_info "Waiting for OpenClaw pod to start..."
-  if $KUBECTL rollout status deployment/openclaw -n "$OPENCLAW_NAMESPACE" --timeout=300s 2>/dev/null; then
-    POD=$($KUBECTL get pods -n "$OPENCLAW_NAMESPACE" -l app=openclaw --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-    if [ -n "$POD" ]; then
+# Wait for pod to be ready, then install agent files + skills into workspace
+log_info "Waiting for OpenClaw pod to start..."
+if $KUBECTL rollout status deployment/openclaw -n "$OPENCLAW_NAMESPACE" --timeout=300s 2>/dev/null; then
+  POD=$($KUBECTL get pods -n "$OPENCLAW_NAMESPACE" -l app=openclaw --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+  if [ -n "$POD" ]; then
+    # Install default agent identity files into workspace
+    WORKSPACE="/home/node/.openclaw/workspace-${OPENCLAW_PREFIX}_${SHADOWMAN_CUSTOM_NAME}"
+    $KUBECTL exec -n "$OPENCLAW_NAMESPACE" "$POD" -c gateway -- mkdir -p "$WORKSPACE"
+    for key in AGENTS.md agent.json; do
+      $KUBECTL get configmap shadowman-agent -n "$OPENCLAW_NAMESPACE" -o jsonpath="{.data.${key//./\\.}}" | \
+        $KUBECTL exec -i -n "$OPENCLAW_NAMESPACE" "$POD" -c gateway -- \
+          sh -c "cat > ${WORKSPACE}/${key}"
+    done
+    log_success "Agent identity files installed (${SHADOWMAN_DISPLAY_NAME})"
+
+    # Install skills into workspace
+    if [ "$A2A_ENABLED" = "true" ]; then
       $KUBECTL get configmap a2a-skill -n "$OPENCLAW_NAMESPACE" -o jsonpath='{.data.SKILL\.md}' | \
         $KUBECTL exec -i -n "$OPENCLAW_NAMESPACE" "$POD" -c gateway -- \
           sh -c 'mkdir -p /home/node/.openclaw/skills/a2a && cat > /home/node/.openclaw/skills/a2a/SKILL.md'
       log_success "A2A skill installed into workspace"
-    else
-      log_warn "Could not find running pod — run install-a2a-skill.sh manually after pod starts"
     fi
+
+    # Restart to load agent config
+    $KUBECTL rollout restart deployment/openclaw -n "$OPENCLAW_NAMESPACE"
+    $KUBECTL rollout status deployment/openclaw -n "$OPENCLAW_NAMESPACE" --timeout=300s 2>/dev/null
+    log_success "OpenClaw restarted with default agent"
   else
-    log_warn "Pod not ready yet — run install-a2a-skill.sh manually after pod starts"
+    log_warn "Could not find running pod — run setup-agents.sh after pod starts"
   fi
 else
-  log_info "Skipping A2A skill installation (A2A disabled)"
+  log_warn "Pod not ready yet — run setup-agents.sh after pod starts"
 fi
 echo ""
 
@@ -693,11 +721,13 @@ echo "Credentials:"
 echo "  OpenClaw Gateway Token: $OPENCLAW_GATEWAY_TOKEN"
 echo ""
 
-echo "Next steps — deploy AI agents:"
-echo "  1. Wait for OpenClaw to be ready:"
-echo "     $KUBECTL rollout status deployment/openclaw -n $OPENCLAW_NAMESPACE --timeout=600s"
-echo "  2. Run the agent setup script:"
-echo "     scripts/setup-agents.sh$(if $K8S_MODE; then echo ' --k8s'; fi)"
+echo "Default agent: ${SHADOWMAN_DISPLAY_NAME} (${OPENCLAW_PREFIX}_${SHADOWMAN_CUSTOM_NAME})"
+if [ "$A2A_ENABLED" = "true" ]; then
+  echo "Skills:        A2A"
+fi
+echo ""
+echo "Next steps (optional) — deploy additional agents + cron jobs:"
+echo "  scripts/setup-agents.sh$(if $K8S_MODE; then echo ' --k8s'; fi)"
 echo ""
 
 log_success "Setup complete!"
