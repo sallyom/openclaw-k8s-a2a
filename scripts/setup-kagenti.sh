@@ -265,6 +265,24 @@ log_success "Kagenti installed"
 echo ""
 
 # ============================================================================
+# Step 5b: Override webhook image for port exclusion annotation support
+# ============================================================================
+# The upstream webhook hardcodes OUTBOUND_PORTS_EXCLUDE="8080" with no inbound exclusions.
+# Our fork (github.com:sallyom/kagenti-extensions branch update-for-ports) adds support for
+# kagenti.io/outbound-ports-exclude and kagenti.io/inbound-ports-exclude pod annotations.
+# Until this is merged upstream, override the webhook image:
+log_info "Step 5b: Override webhook image for port exclusion annotations"
+WEBHOOK_IMAGE="quay.io/sallyom/kagenti-webhook:latest"
+run_cmd helm upgrade kagenti "$KAGENTI_REPO/charts/kagenti/" \
+  --reuse-values \
+  --set kagenti-webhook-chart.image.repository=quay.io/sallyom/kagenti-webhook \
+  --set kagenti-webhook-chart.image.tag=latest \
+  -n kagenti-system
+log_success "Webhook image overridden: $WEBHOOK_IMAGE"
+log_info "  Source: github.com:sallyom/kagenti-extensions (branch: update-for-ports)"
+echo ""
+
+# ============================================================================
 # Step 6: Verify
 # ============================================================================
 log_info "Step 6: Verify installation"
