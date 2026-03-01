@@ -2,13 +2,14 @@
 
 ## Overview
 
-OpenClaw instances communicate across Kubernetes namespaces using Google's [Agent-to-Agent (A2A)](https://github.com/google/A2A) protocol. Each instance runs an A2A bridge sidecar that translates between A2A JSON-RPC and OpenClaw's internal API. Authentication is handled transparently by an Envoy-based AuthBridge that exchanges SPIFFE workload identities for OAuth tokens via Keycloak.
+OpenClaw instances communicate across Kubernetes namespaces using Google's [Agent-to-Agent (A2A)](https://github.com/google/A2A) protocol. Authentication is handled transparently by [Kagenti](https://github.com/kagenti/kagenti)'s Auth Identity Bridge (AIB) — webhook-injected sidecars that exchange SPIFFE workload identities for OAuth tokens via Keycloak.
 
 This architecture demonstrates zero-trust agent communication where:
 - Each OpenClaw instance has a cryptographic workload identity (SPIFFE)
 - No shared secrets or API keys between instances
 - All cross-namespace traffic is authenticated and auditable
 - The gateway container remains fully hardened (read-only FS, dropped capabilities, no privilege escalation)
+- Sidecars are injected automatically by the Kagenti webhook — no manual sidecar definitions needed
 
 ## Architecture
 
@@ -18,17 +19,17 @@ This architecture demonstrates zero-trust agent communication where:
  │  OpenClaw Pod                      │            │  OpenClaw Pod                      │
  │                                    │            │                                    │
  │  ┌──────────┐    ┌──────────────┐  │            │  ┌──────────────┐    ┌──────────┐  │
- │  │  Lynx    │    │   A2A Bridge │  │            │  │  A2A Bridge  │    │ Shadowman│  │
- │  │  Agent   │    │   :8080      │  │            │  │  :8080       │    │  Agent   │  │
- │  └────┬─────┘    └──────┬───────┘  │            │  └──────┬───────┘    └────┬─────┘  │
- │       │                 │          │            │         │                 │        │
- │  ┌────┴─────────────────┴───────┐  │            │  ┌──────┴─────────────────┴─────┐  │
- │  │     OpenClaw Gateway         │  │            │  │     OpenClaw Gateway         │  │
- │  │     :18789                   │  │            │  │     :18789                   │  │
- │  └──────────────────────────────┘  │            │  └──────────────────────────────┘  │
+ │  │  Lynx    │    │  Agent Card  │  │            │  │  Agent Card  │    │ Shadowman│  │
+ │  │  Agent   │    │  :8080       │  │            │  │  :8080       │    │  Agent   │  │
+ │  └────┬─────┘    └──────────────┘  │            │  └──────────────┘    └────┬─────┘  │
+ │       │                            │            │                          │        │
+ │  ┌────┴────────────────────────┐   │            │  ┌───────────────────────┴─────┐  │
+ │  │     OpenClaw Gateway        │   │            │  │     OpenClaw Gateway        │  │
+ │  │     :18789                  │   │            │  │     :18789                  │  │
+ │  └─────────────────────────────┘   │            │  └────────────────────────────┘  │
  │                                    │            │                                    │
  │  ┌──────────────────────────────┐  │            │  ┌──────────────────────────────┐  │
- │  │     AuthBridge (Envoy)       │  │  A2A/HTTP  │  │     AuthBridge (Envoy)       │  │
+ │  │  AIB Sidecars (Kagenti)      │  │  A2A/HTTP  │  │  AIB Sidecars (Kagenti)      │  │
  │  │  ┌─────────┐ ┌────────────┐  │  │◄──────────►│  │ ┌────────────┐ ┌─────────┐   │  │
  │  │  │ SPIFFE  │ │  Token     │  │  │            │  │ │   Token    │ │ SPIFFE  │   │  │
  │  │  │ Helper  │ │  Exchange  │  │  │            │  │ │  Exchange  │ │ Helper  │   │  │
@@ -39,13 +40,12 @@ This architecture demonstrates zero-trust agent communication where:
           ▼                                                    ▼
  ┌─────────────────┐                                ┌─────────────────┐
  │  SPIRE Agent    │         Trust Domain:          │  SPIRE Agent    │
- │  (DaemonSet)    │    demo.example.com            │  (DaemonSet)    │
+ │  (DaemonSet)    │  apps.<cluster-domain>         │  (DaemonSet)    │
  └────────┬────────┘                                └────────┬────────┘
           │                                                  │
           ▼                                                  ▼
  ┌────────────────────────────────────────────────────────────────────┐
- │                      Keycloak (spiffe-demo)                        │
- │   Realm: spiffe-demo                                               │
+ │                      Keycloak (Kagenti-managed)                    │
  │   Clients auto-registered per SPIFFE ID                            │
  └────────────────────────────────────────────────────────────────────┘
 ```
@@ -67,78 +67,76 @@ When Lynx (Sally's agent) sends a message to Shadowman (Bob's agent):
 
 4. Request arrives at Bob's pod → Envoy inbound listener (:15124)
    a. Validates OAuth token against Keycloak
-   b. Strips auth header, forwards to A2A bridge (:8080)
+   b. Strips auth header, forwards to agent-card (:8080)
 
-5. A2A bridge:
-   a. Parses JSON-RPC message/send request
-   b. Extracts text from A2A message parts
-   c. Translates to OpenAI chat completions format
-   d. Calls gateway at 127.0.0.1:18789 with bearer token
-   e. Wraps response in A2A JSON-RPC format
+5. Agent card server serves /.well-known/agent.json for discovery
+   (A2A message handling is done by the gateway via the A2A skill)
 
 6. Response travels back through Envoy to Lynx
 ```
 
 ## Pod Components
 
-Each OpenClaw pod contains 7 containers (2 init + 5 runtime):
+With `--with-a2a` enabled, Kagenti webhook injects AIB sidecars at admission time. The resulting pod has:
 
 ### Init Containers
 
-| Container | Image | Purpose |
-|-----------|-------|---------|
-| `proxy-init` | `kagenti-extensions/proxy-init` | iptables rules for transparent Envoy interception |
-| `init-config` | `ubi9-minimal` | Copies openclaw.json and agent configs to PVC |
+| Container | Image | Source | Purpose |
+|-----------|-------|--------|---------|
+| `init-config` | `ubi9-minimal` | Deployment manifest | Copies openclaw.json and agent configs to PVC |
+| `proxy-init` | `kagenti-extensions/proxy-init` | Webhook-injected | iptables rules for transparent Envoy interception |
 
 ### Runtime Containers
 
-| Container | Port | Purpose | Security |
-|-----------|------|---------|----------|
-| `gateway` | 18789 | OpenClaw agent runtime | Read-only FS, all caps dropped, no escalation |
-| `a2a-bridge` | 8080 | A2A JSON-RPC ↔ OpenAI translation | Read-only FS, non-root, all caps dropped |
-| `oauth-proxy` | 8443 | OpenShift OAuth for UI access | Read-only FS, all caps dropped |
-| `spiffe-helper` | - | Fetches X.509 + JWT SVIDs from SPIRE | `spc_t` SELinux for CSI access |
-| `client-registration` | - | Registers OAuth client in Keycloak | `spc_t` SELinux |
-| `envoy-proxy` | 15123, 15124 | Transparent token exchange proxy | Runs as UID 1337 |
+| Container | Port | Source | Purpose |
+|-----------|------|--------|---------|
+| `gateway` | 18789 | Deployment manifest | OpenClaw agent runtime |
+| `agent-card` | 8080 | Deployment manifest | Serves `/.well-known/agent.json` for Kagenti operator discovery |
+| `oauth-proxy` | 8443 | Deployment manifest (OpenShift only) | OpenShift OAuth for UI access |
+| `spiffe-helper` | - | Webhook-injected | Fetches X.509 + JWT SVIDs from SPIRE |
+| `client-registration` | - | Webhook-injected | Registers OAuth client in Keycloak |
+| `envoy-proxy` | 15123, 15124 | Webhook-injected | Transparent token exchange proxy |
 
-## A2A Bridge
+Without `--with-a2a`, the pod has only `init-config`, `gateway`, `agent-card`, and `oauth-proxy` (OpenShift) — no Kagenti sidecars.
 
-The A2A bridge (`manifests/openclaw/base/a2a-bridge-configmap.yaml`) is a lightweight Node.js HTTP server that implements two roles:
+## Kagenti Webhook Injection
 
-### Agent Discovery
+Instead of manually defining AIB sidecars in the deployment manifest, the Kagenti webhook injects them automatically when:
 
-Serves an agent card at `/.well-known/agent.json` (and `/.well-known/agent-card.json` for backward compatibility). The card is built dynamically from `openclaw.json` — each agent in `agents.list[]` becomes a skill:
+1. The namespace is labeled `kagenti-enabled=true`
+2. The pod template has label `kagenti.io/inject: enabled`
 
-```json
-{
-  "name": "openclaw",
-  "url": "http://openclaw.<namespace>.svc.cluster.local:8080",
-  "capabilities": { "streaming": false },
-  "skills": [
-    { "id": "sallyom_lynx", "name": "Lynx", "description": "Chat with Lynx" }
-  ]
-}
+`setup.sh --with-a2a` sets both. The webhook adds `proxy-init`, `spiffe-helper`, `client-registration`, and `envoy-proxy` containers at Deployment create/update time.
+
+### What the webhook provides
+- Sidecar container definitions with correct images and env vars
+- SPIRE CSI volume mounts for SPIFFE identity
+- Shared volumes for credential exchange between sidecars
+
+### What we still manage
+- `agent-card` sidecar (serves `/.well-known/agent.json` — webhook doesn't inject this yet)
+- `oauth-proxy` sidecar (OpenShift-specific, not part of Kagenti)
+- AgentCard CR (tells the Kagenti operator about our agent)
+- Custom SCC (OpenShift — grants capabilities needed by injected sidecars)
+- proxy-init port exclusion patch (port 443 for oauth-proxy K8s API access)
+
+## Agent Card Server
+
+The `agent-card` sidecar serves `/.well-known/agent.json` for Kagenti operator discovery. It uses a simple Python HTTP server on `ubi9`:
+
+```yaml
+- name: agent-card
+  image: registry.redhat.io/ubi9:latest
+  command: ["python3", "-m", "http.server", "8080", "--directory", "/srv"]
 ```
 
-### Protocol Translation
+The agent card content comes from a ConfigMap (`openclaw-agent-card`) mounted at `/srv/.well-known/agent.json`. The AgentCard CR references this service endpoint so the Kagenti operator can discover the agent.
 
-Translates A2A `message/send` JSON-RPC requests into OpenAI `/v1/chat/completions` calls against the local gateway:
-
-```
-A2A request:                              OpenAI request:
-{                                         {
-  "method": "message/send",        →        "model": "nerc/openai/gpt-oss-20b",
-  "params": {                               "messages": [{
-    "message": {                              "role": "user",
-      "parts": [{"text": "Hi"}]               "content": "Hi"
-    }                                       }]
-  }                                       }
-}
-```
+Note: Use `ubi9` (not `ubi9-minimal`) — the minimal image does not include `python3`.
 
 ## AuthBridge (Zero-Trust Identity)
 
-The AuthBridge pattern provides transparent mutual authentication between OpenClaw instances without application code changes. It consists of four sidecar containers working together:
+The AuthBridge pattern provides transparent mutual authentication between OpenClaw instances without application code changes. It consists of four sidecar containers injected by the Kagenti webhook:
 
 ### 1. SPIFFE Helper
 
@@ -147,7 +145,7 @@ Fetches workload identity credentials from the SPIRE agent via CSI volume:
 - JWT SVID token (for Keycloak exchange)
 - Output: `/opt/svid.pem`, `/opt/svid_key.pem`, `/opt/jwt_svid.token`
 
-Identity format: `spiffe://demo.example.com/ns/<namespace>/sa/openclaw-oauth-proxy`
+Identity format: `spiffe://<trust-domain>/ns/<namespace>/sa/<service-account>`
 
 ### 2. Client Registration
 
@@ -161,19 +159,17 @@ Waits for SPIFFE credentials, then registers the OpenClaw instance as an OAuth c
 Transparent proxy that intercepts all pod network traffic via iptables rules set by `proxy-init`:
 
 - **Outbound** (port 15123): Calls `ext_proc` to exchange SPIFFE JWT for Keycloak OAuth token, injects `Authorization` header
-- **Inbound** (port 15124): Validates incoming OAuth tokens against Keycloak before forwarding to the A2A bridge
+- **Inbound** (port 15124): Validates incoming OAuth tokens against Keycloak before forwarding
 
 ### 4. Proxy Init (init container)
 
-Configures iptables to redirect traffic through Envoy. Excluded ports prevent interception of:
-- Internal traffic: 18789 (gateway), 18790 (bridge WS)
-- Health probes: 8080 (A2A bridge), 8443 (OAuth proxy)
-- OTEL: 4317, 4318 (collector)
-- External HTTPS: 443 (model API calls)
+Configures iptables to redirect traffic through Envoy. Excluded ports prevent interception of internal and infrastructure traffic.
+
+**OpenShift note:** The webhook injects proxy-init with `OUTBOUND_PORTS_EXCLUDE="8080"` (Kind default). On OpenShift, `setup.sh` patches this to `"8080,443"` so oauth-proxy can reach the K8s API (172.30.0.1:443) for token reviews. See [KAGENTI-SETUP.md](KAGENTI-SETUP.md#proxy-init-port-443-exclusion-openshift).
 
 ## Custom SCC (OpenShift)
 
-The `openclaw-authbridge` SCC (`manifests/openclaw/base/openclaw-scc.yaml`) grants only the capabilities the AuthBridge sidecars require:
+The `openclaw-authbridge` SCC grants capabilities required by the webhook-injected AIB sidecars:
 
 | Capability | Container | Reason |
 |-----------|-----------|--------|
@@ -182,7 +178,7 @@ The `openclaw-authbridge` SCC (`manifests/openclaw/base/openclaw-scc.yaml`) gran
 | `RunAsAny` user | proxy-init (UID 0), envoy (UID 1337) | Sidecar runtime requirements |
 | CSI volumes | spiffe-helper | SPIRE agent socket mount |
 
-The SCC preserves `fsGroup: MustRunAs`, so the gateway container runs with the namespace-assigned GID in supplemental groups. This means the gateway's hardened security posture is unchanged:
+The SCC preserves `fsGroup: MustRunAs`, so the gateway container runs with the namespace-assigned GID in supplemental groups. The gateway's hardened security posture is unchanged:
 
 ```yaml
 # Gateway container security (unchanged from restricted SCC)
@@ -194,14 +190,9 @@ securityContext:
     - ALL
 ```
 
-Grant the SCC to the service account:
-```bash
-oc adm policy add-scc-to-user openclaw-authbridge -z openclaw-oauth-proxy -n <namespace>
-```
-
 ## A2A Skill
 
-The A2A skill (`manifests/openclaw/skills/a2a/SKILL.md`) teaches agents how to communicate with other OpenClaw instances. It is deployed as a ConfigMap and copied into the agent's skill directory at `/home/node/.openclaw/skills/a2a/SKILL.md`.
+The A2A skill (`agents/openclaw/skills/a2a/SKILL.md`) teaches agents how to communicate with other OpenClaw instances. It is deployed as a ConfigMap and copied into the agent's skill directory at `/home/node/.openclaw/skills/a2a/SKILL.md`.
 
 The skill instructs agents to:
 
@@ -213,138 +204,31 @@ Agents never handle authentication — the AuthBridge does it transparently. The
 
 ## Cluster Prerequisites
 
-The A2A/AuthBridge feature depends on three external components that must be running in the cluster before deploying OpenClaw. These provide the identity infrastructure that makes zero-trust cross-namespace communication possible.
+A2A requires the Kagenti platform stack. Install it before deploying agents:
 
-### 1. SPIRE (SPIFFE Runtime Environment)
-
-SPIRE provides cryptographic workload identity via the SPIFFE standard. Each OpenClaw pod gets an X.509 certificate and JWT token that uniquely identify it by namespace and service account.
-
-**What must be deployed:**
-
-| Component | Purpose |
-|-----------|---------|
-| SPIRE Server | Issues and manages workload identities (SVIDs) |
-| SPIRE Agent (DaemonSet) | Runs on each node, attests workloads, serves SVIDs to pods |
-| SPIFFE CSI Driver (`csi.spiffe.io`) | Exposes the SPIRE agent socket as a CSI volume so pods can request identities without hostPath mounts |
-
-**Namespace:** Typically `spiffe-system`
-
-**Trust domain:** `demo.example.com` (configurable — must match Keycloak realm federation)
-
-**Registration entries:** Each OpenClaw namespace needs a SPIRE registration entry that maps the pod's service account to a SPIFFE ID:
-
-```
-spiffe://demo.example.com/ns/<namespace>/sa/openclaw-oauth-proxy
-```
-
-Example registration (via SPIRE Server CLI or CRD):
 ```bash
-spire-server entry create \
-  -spiffeID spiffe://demo.example.com/ns/sallyom-openclaw/sa/openclaw-oauth-proxy \
-  -parentID spiffe://demo.example.com/agent/<node-id> \
-  -selector k8s:ns:sallyom-openclaw \
-  -selector k8s:sa:openclaw-oauth-proxy
+./scripts/setup-kagenti.sh
 ```
 
-**How OpenClaw uses it:**
-- `spiffe-helper` sidecar connects to the agent socket at `/run/spire/agent-sockets/spire-agent.sock` (mounted via CSI volume)
-- Fetches X.509 SVID → `/opt/svid.pem`, `/opt/svid_key.pem`
-- Fetches JWT SVID (audience: `kagenti`) → `/opt/jwt_svid.token`
-- JWT is passed to client-registration and used by the token processor for Keycloak exchange
+See [KAGENTI-SETUP.md](KAGENTI-SETUP.md) for detailed steps. The stack provides:
 
-**Configuration:** `manifests/openclaw/base/authbridge-configmaps.yaml` (spiffe-helper-config section)
-
-### 2. Keycloak
-
-Keycloak acts as the OAuth authorization server. It validates SPIFFE JWTs and issues OAuth tokens that remote instances can verify. This is what makes cross-namespace calls authenticated — Envoy exchanges the local SPIFFE JWT for a Keycloak OAuth token before each outbound call.
-
-**What must be deployed:**
-
-| Component | Purpose |
-|-----------|---------|
-| Keycloak Server | OIDC provider with token exchange support |
-| Realm: `spiffe-demo` | Pre-configured realm that trusts the SPIRE trust domain |
-
-**Namespace:** `spiffe-demo` (current deployment)
-
-**Required Keycloak configuration:**
-- Token exchange enabled (RFC 8693 `urn:ietf:params:oauth:grant-type:token-exchange`)
-- Dynamic client registration enabled (OpenClaw pods self-register on startup)
-- SPIFFE JWT issuer trusted as an identity provider in the realm
-- Admin API accessible for client registration (used by `client-registration` sidecar)
-
-**How OpenClaw uses it:**
-- `client-registration` sidecar registers the pod as an OAuth client using the SPIFFE ID as the client ID
-- `envoy-with-processor` exchanges SPIFFE JWTs for Keycloak OAuth tokens on outbound requests
-- On inbound requests, Envoy validates the caller's OAuth token against Keycloak
-
-**Configuration:**
-- `manifests/openclaw/base/authbridge-configmaps.yaml` — Keycloak URL, realm, admin credentials
-- `manifests/openclaw/base/authbridge-secret.yaml` — Token endpoint, issuer, target audience
-
-**Current values (cluster-specific, update for your environment):**
-```
-KEYCLOAK_URL:  https://keycloak-spiffe-demo.apps.ocp-demo.com
-KEYCLOAK_REALM: spiffe-demo
-TOKEN_URL:     https://keycloak-spiffe-demo.apps.ocp-demo.com/realms/spiffe-demo/protocol/openid-connect/token
-```
-
-### 3. Kagenti Extension Images
-
-The AuthBridge sidecars use container images from the [Kagenti](https://github.com/kagenti) project. These are pulled from `ghcr.io/kagenti/` at pod startup — no operator or CRD installation is required.
-
-| Image | Container | Purpose |
-|-------|-----------|---------|
-| `ghcr.io/kagenti/kagenti-extensions/proxy-init` | `proxy-init` (init) | iptables rules for transparent Envoy interception |
-| `ghcr.io/kagenti/kagenti-extensions/client-registration` | `client-registration` | Registers OAuth client in Keycloak using SPIFFE identity |
-| `ghcr.io/kagenti/kagenti-extensions/envoy-with-processor` | `envoy-proxy` | Envoy proxy + ext_proc token exchange processor |
-| `ghcr.io/spiffe/spiffe-helper` | `spiffe-helper` | Fetches SVIDs from SPIRE agent |
-
-The Kagenti operator itself (`kagenti-system` namespace) is **not required**. OpenClaw uses Kagenti labels (`kagenti.io/type: agent`, etc.) for future discovery but does not depend on the operator for any runtime functionality. See the note in `manifests/openclaw/base/kustomization.yaml`.
-
-### Dependency Diagram
-
-```
-┌────────────────────────────────────────────────────────── ┐
-│  Your Cluster                                             │
-│                                                           │
-│  ┌─────────────────┐    ┌───────────────────────────── ┐  │
-│  │  spiffe-system   │    │  spiffe-demo                │  │
-│  │                  │    │                             │  │
-│  │  SPIRE Server    │    │  Keycloak                   │  │
-│  │  SPIRE Agent     │◄───│  Realm: spiffe-demo         │  │
-│  │  CSI Driver      │    │  Token exchange enabled     │  │
-│  │                  │    │  Client registration enabled│  │
-│  └────────┬─────────┘    └──────────┬──────────────────┘  │
-│           │ SVIDs                    │ OAuth tokens       │
-│           ▼                         ▼                     │
-│  ┌────────────────────────────────────────────────────┐   │
-│  │  <prefix>-openclaw                                 │   │
-│  │                                                    │   │
-│  │  spiffe-helper ──► client-registration ──► envoy   │   │
-│  │  (gets SVIDs)      (registers client)     (token   │   │
-│  │                                           exchange)│   │
-│  │                    gateway ◄── a2a-bridge          │   │
-│  └────────────────────────────────────────────────────┘   │
-│                                                           │
-│  ┌────────────────────────────────────────────────────┐   │
-│  │  <other-prefix>-openclaw (same pattern)            │   │
-│  └────────────────────────────────────────────────────┘   │
-└────────────────────────────────────────────────────────── ┘
-```
+| Component | Namespace | Purpose |
+|-----------|-----------|---------|
+| SPIRE Server + Agent + CSI Driver | `zero-trust-workload-identity-manager` | Cryptographic workload identity (SPIFFE) |
+| Keycloak | `keycloak` | OAuth token exchange, client registration |
+| Kagenti Operator + Webhook | `kagenti-system` | Sidecar injection, agent discovery |
+| MCP Gateway | `mcp-system` | Model Context Protocol gateway |
 
 ## Deployment
 
 ### Setup
 
 ```bash
-# 1. Deploy OpenClaw (creates namespace, deploys pod, installs A2A skill)
-./scripts/setup.sh          # OpenShift
-./scripts/setup.sh --k8s    # Vanilla K8s (no AuthBridge)
+# 1. Install Kagenti platform (SPIRE, Keycloak, operator, webhook)
+./scripts/setup-kagenti.sh
 
-# 2. Grant SCC (OpenShift only)
-oc adm policy add-scc-to-user openclaw-authbridge \
-  -z openclaw-oauth-proxy -n <namespace>
+# 2. Deploy OpenClaw with A2A enabled
+./scripts/setup.sh --with-a2a
 
 # 3. Deploy agents (optional — adds resource-optimizer, cron jobs)
 ./scripts/setup-agents.sh
@@ -353,6 +237,9 @@ oc adm policy add-scc-to-user openclaw-authbridge \
 ### Verification
 
 ```bash
+# Check all containers are running
+oc get pods -l app=openclaw -n <namespace>
+
 # Check agent card
 curl -s http://openclaw.<namespace>.svc.cluster.local:8080/.well-known/agent.json | jq .
 
@@ -367,61 +254,24 @@ oc exec deployment/openclaw -c gateway -- \
   -d '{"jsonrpc":"2.0","id":"1","method":"message/send","params":{"message":{"role":"user","parts":[{"kind":"text","text":"Hello from my namespace"}]}}}'
 ```
 
-## Network Flow Diagram
-
-```
-                    ┌─────────────────────┐
-                    │   K8s Service       │
-                    │   openclaw:8080     │
-                    │   (A2A endpoint)    │
-                    └──────────┬──────────┘
-                               │
- Inbound ──────────────────────┼──────────────────────── Outbound
-                               │
-  ┌────────────────────────────┼────────────────────────────────┐
-  │  Pod                       │                                │
-  │                            ▼                                │
-  │  ┌───────────────────────────────────────────────────────┐  │
-  │  │  iptables (proxy-init)                                │  │
-  │  │                                                       │  │
-  │  │  Inbound:  → port 15124 (Envoy)                       │  │
-  │  │  Outbound: → port 15123 (Envoy)                       │  │
-  │  │                                                       │  │
-  │  │  Excluded inbound:  8080, 8443, 18789, 18790          │  │
-  │  │  Excluded outbound: 443, 4317, 4318, 18789            │  │
-  │  └───────────────────────────────────────────────────────┘  │
-  │                                                             │
-  │  ┌─────────────┐  ┌────────────┐  ┌──────────────────────┐  │
-  │  │ Envoy       │  │ Token      │  │ SPIFFE Helper        │  │
-  │  │ :15123 out  │──│ Processor  │──│ → /opt/jwt_svid.token│  │
-  │  │ :15124 in   │  │ :9090      │  │ → /opt/svid.pem      │  │
-  │  └──────┬──────┘  └────────────┘  └──────────────────────┘  │
-  │         │                                                   │
-  │         ▼                                                   │
-  │  ┌─────────────┐  ┌──────────────────────────────────────┐  │
-  │  │ A2A Bridge  │  │ Gateway                              │  │
-  │  │ :8080       │──│ :18789                               │  │
-  │  │ JSON-RPC    │  │ OpenAI-compatible API                │  │
-  │  └─────────────┘  └──────────────────────────────────────┘  │
-  └─────────────────────────────────────────────────────────────┘
-```
-
 ## Files
 
 | File | Description |
 |------|-------------|
-| `manifests/openclaw/base/a2a-bridge-configmap.yaml` | A2A bridge Node.js server |
-| `manifests/openclaw/base/openclaw-deployment.yaml` | Pod spec with all 7 containers |
-| `manifests/openclaw/base/openclaw-scc.yaml` | Custom SCC for AuthBridge |
-| `manifests/openclaw/base/authbridge-configmaps.yaml` | SPIFFE/Keycloak/Envoy config |
-| `manifests/openclaw/base/authbridge-secret.yaml` | Token exchange parameters |
-| `manifests/openclaw/skills/a2a/SKILL.md` | A2A skill for agents |
-| `manifests/openclaw/skills/kustomization.yaml` | Skill ConfigMap generator |
-| `manifests/openclaw/skills/install-a2a-skill.sh` | Install skill into running pod |
+| `agents/openclaw/base/openclaw-deployment.yaml` | Pod spec (gateway, agent-card, init-config) |
+| `agents/openclaw/base/openclaw-agent-card-configmap.yaml` | Agent card ConfigMap (/.well-known/agent.json) |
+| `platform/auth-identity-bridge/openclaw-scc.yaml` | Custom SCC for AIB sidecars |
+| `platform/auth-identity-bridge/openclaw-agentcard.yaml.envsubst` | AgentCard CR for Kagenti operator |
+| `agents/openclaw/skills/a2a/SKILL.md` | A2A skill for agents |
+| `agents/openclaw/skills/kustomization.yaml` | Skill ConfigMap generator |
+| `agents/openclaw/skills/install-a2a-skill.sh` | Install skill into running pod |
+| `scripts/setup-kagenti.sh` | Kagenti platform installation script |
+| `docs/KAGENTI-SETUP.md` | Kagenti setup guide and known issues |
 
 ## Limitations
 
-- **No streaming**: A2A bridge handles `message/stream` as non-streaming (full response returned at once)
+- **No streaming**: A2A `message/stream` is handled as non-streaming (full response returned at once)
 - **Single-turn**: Each `message/send` creates a new session — no multi-turn conversation context across calls
-- **Kagenti operator gap**: The Kagenti Agent CR takes over Deployment lifecycle, overwriting env vars, volumes, and sidecars. Until the operator supports "unmanaged" agents, we use the A2A bridge for protocol compatibility but skip operator-level discovery. See comments in `manifests/openclaw/base/kustomization.yaml`.
-- **K8s mode**: When deployed with `--k8s` (no OpenShift), the AuthBridge sidecars are not present. Cross-namespace calls work but are unauthenticated.
+- **Agent card sidecar**: Kagenti webhook does not yet inject an agent-card server. We add one manually using `ubi9` + `python3 -m http.server`. Upstream issue needed.
+- **proxy-init port exclusion**: Webhook hardcodes `OUTBOUND_PORTS_EXCLUDE="8080"`. On OpenShift, `setup.sh` patches to add port 443. Upstream issue needed for annotation-based configuration.
+- **K8s mode**: When deployed with `--k8s` without `--with-a2a`, no AIB sidecars are present. Cross-namespace calls work but are unauthenticated.

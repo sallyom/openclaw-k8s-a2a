@@ -19,7 +19,27 @@ After Kagenti is running, deploy agents (e.g. OpenClaw) with `kagenti.io/inject:
 - `helm` >= 3.18.0
 - Clone of [kagenti/kagenti](https://github.com/kagenti/kagenti) (for local chart install)
 
-## Step 0: Pre-flight
+## Quick Start (Automated)
+
+```bash
+./scripts/setup-kagenti.sh
+```
+
+The script is interactive — it auto-detects your kagenti repo (expects `../kagenti` relative to this repo), prompts for agent namespaces, and runs all steps below. It's idempotent (safe to re-run) and supports `--dry-run` to preview commands.
+
+Options:
+```
+--kagenti-repo PATH       Path to local kagenti repo clone
+--agent-namespaces NS     Comma-separated namespaces for agent injection
+--skip-ovn-patch          Skip OVN gateway routing patch
+--skip-mcp-gateway        Skip MCP Gateway installation
+--mcp-gateway-version VER MCP Gateway chart version (default: 0.4.0)
+--dry-run                 Show commands without executing
+```
+
+## Manual Steps
+
+### Step 0: Pre-flight
 
 ```bash
 # Verify connectivity and version
@@ -28,7 +48,7 @@ oc whoami
 kubectl get clusterversion version -o jsonpath='{.status.desired.version}'
 ```
 
-## Step 1: OVN Gateway Patch
+### Step 1: OVN Gateway Patch
 
 Required for OVNKubernetes clusters (most OCP clusters) to support Istio Ambient mode. Without this, health probes fail when ztunnel proxy is active.
 
@@ -37,16 +57,16 @@ kubectl patch network.operator.openshift.io cluster --type=merge \
   -p '{"spec":{"defaultNetwork":{"ovnKubernetesConfig":{"gatewayConfig":{"routingViaHost":true}}}}}'
 ```
 
-## Step 2: Detect Trust Domain
+### Step 2: Detect Trust Domain
 
 ```bash
 export DOMAIN="apps.$(kubectl get dns cluster -o jsonpath='{ .spec.baseDomain }')"
 echo "Trust domain: $DOMAIN"
 ```
 
-## Step 3: Install kagenti-deps (SPIRE + cert-manager)
+### Step 3: Install kagenti-deps (SPIRE + cert-manager)
 
-### From local repo (recommended until clusterName fix is released)
+#### From local repo (recommended until clusterName fix is released)
 
 ```bash
 cd <path-to-kagenti-repo>
@@ -56,7 +76,7 @@ helm install kagenti-deps ./charts/kagenti-deps/ \
   --set spire.trustDomain=${DOMAIN} --wait
 ```
 
-### From OCI registry (after fix is released)
+#### From OCI registry (after fix is released)
 
 ```bash
 LATEST_TAG=$(git ls-remote --tags --sort="v:refname" \
@@ -68,7 +88,7 @@ helm install kagenti-deps oci://ghcr.io/kagenti/kagenti/kagenti-deps \
   --set spire.trustDomain=${DOMAIN} --wait
 ```
 
-### Verify SPIRE
+#### Verify SPIRE
 
 ```bash
 kubectl get daemonsets -n zero-trust-workload-identity-manager
@@ -78,14 +98,14 @@ kubectl get pods -n zero-trust-workload-identity-manager
 # spire-server, spire-agent (per node), csi-driver (per node), oidc-provider, controller-manager
 ```
 
-## Step 4: Install MCP Gateway
+### Step 4: Install MCP Gateway
 
 ```bash
 helm install mcp-gateway oci://ghcr.io/kagenti/charts/mcp-gateway \
   --create-namespace --namespace mcp-system --version 0.4.0
 ```
 
-## Step 5: Install Kagenti (Keycloak + operator + webhook + UI)
+### Step 5: Install Kagenti (Keycloak + operator + webhook + UI)
 
 ```bash
 cd <path-to-kagenti-repo>
@@ -115,7 +135,7 @@ helm upgrade --install kagenti ./charts/kagenti/ \
   --set agentOAuthSecret.useServiceAccountCA=false
 ```
 
-### Adding agent namespaces after install
+#### Adding agent namespaces after install
 
 Agent namespaces must be registered with Kagenti so the webhook-injected sidecars get their required ConfigMaps. To add a namespace after initial install:
 
@@ -127,7 +147,7 @@ Agent namespaces must be registered with Kagenti so the webhook-injected sidecar
    ```
 2. Re-run `helm upgrade` with the updated `agentNamespaces` list.
 
-## Step 6: Verify
+### Step 6: Verify
 
 ```bash
 # All pods running
@@ -144,7 +164,7 @@ kubectl get secret keycloak-initial-admin -n keycloak \
   -o go-template='Username: {{.data.username | base64decode}}  Password: {{.data.password | base64decode}}{{"\n"}}'
 ```
 
-## Step 7: Deploy OpenClaw Agent
+### Step 7: Deploy OpenClaw Agent
 
 Once Kagenti is healthy, deploy OpenClaw with Auth Identity Bridge enabled:
 
@@ -154,6 +174,8 @@ cd <path-to-openclaw-infra>
 ```
 
 This sets `kagenti.io/inject: enabled` on the pod template — the kagenti-webhook automatically injects AIB sidecars (proxy-init, spiffe-helper, client-registration, envoy-proxy) at admission time.
+
+On OpenShift, `setup.sh` also patches the webhook-injected `proxy-init` to exclude port 443 from iptables interception, so that `oauth-proxy` can reach the K8s API for token reviews. See [Known Issues: proxy-init port exclusion](#proxy-init-port-443-exclusion-openshift).
 
 ## Teardown
 
@@ -165,6 +187,31 @@ helm uninstall kagenti-deps -n kagenti-system
 ```
 
 ## Known Issues
+
+### proxy-init port 443 exclusion (OpenShift)
+
+The Kagenti webhook injects `proxy-init` with `OUTBOUND_PORTS_EXCLUDE="8080"` — this is the Kind/local default where Keycloak runs on HTTP port 8080. On OpenShift, the `oauth-proxy` sidecar needs direct access to the K8s API at `172.30.0.1:443` for token reviews and ConfigMap watches. Without port 443 excluded, proxy-init's iptables rules redirect that traffic through Envoy, causing connection timeouts:
+
+```
+dial tcp 172.30.0.1:443: connect: connection refused
+```
+
+**Current workaround**: `setup.sh --with-a2a` automatically patches the deployment after kustomize apply:
+```bash
+kubectl patch deployment openclaw -n $NS --type=strategic -p '{
+  "spec": {"template": {"spec": {"initContainers": [{
+    "name": "proxy-init",
+    "env": [{"name": "OUTBOUND_PORTS_EXCLUDE", "value": "8080,443"}]
+  }]}}}
+}'
+```
+
+**Kagenti gap — file upstream issue**: The webhook should support per-pod port exclusion configuration, e.g. via pod annotation:
+```yaml
+annotations:
+  kagenti.io/outbound-ports-exclude: "8080,443"
+```
+This would let workloads declare their own exclusions without post-deploy patches. Any pod with an oauth-proxy or other sidecar that talks to the K8s API will hit this issue.
 
 ### SPIRE operand CRD schema mismatch (pre-fix)
 
@@ -194,14 +241,14 @@ The webhook injects sidecars that mount 4 ConfigMaps (`envoy-config`, `spiffe-he
 
 The Kagenti operator's AgentCard controller fetches `/.well-known/agent.json` from the agent's service to populate the agent card in the UI. If the agent framework doesn't natively serve this A2A endpoint, the AgentCard will show `FetchFailed` status and the agent won't appear in the Kagenti UI.
 
-**Current state:** OpenClaw does not serve `/.well-known/agent.json`. In the old manual A2A setup, a dedicated `a2a-bridge` sidecar served this endpoint. Kagenti's webhook-injected sidecars (proxy-init, spiffe-helper, client-registration, envoy-proxy) handle identity and traffic interception but do NOT serve the agent card.
+**Current state:** OpenClaw does not serve `/.well-known/agent.json`. Kagenti's webhook-injected sidecars (proxy-init, spiffe-helper, client-registration, envoy-proxy) handle identity and traffic interception but do NOT serve the agent card.
 
 **Workaround:** Add a lightweight agent-card sidecar to the deployment:
 
 ```yaml
 # Agent card server — serves /.well-known/agent.json for Kagenti operator discovery
 - name: agent-card
-  image: registry.redhat.io/ubi9-minimal:latest
+  image: registry.redhat.io/ubi9:latest
   command: ["python3", "-m", "http.server", "8080", "--directory", "/srv"]
   ports:
   - name: a2a
@@ -219,6 +266,8 @@ The Kagenti operator's AgentCard controller fetches `/.well-known/agent.json` fr
 ```
 
 With a ConfigMap providing the `agent.json` content mounted at `/srv/.well-known/agent.json`. The service port `a2a` (8080) already targets this containerPort name.
+
+Note: Use `ubi9` (not `ubi9-minimal`) — the minimal image does not include `python3`.
 
 **Kagenti gap — file upstream issue:** The webhook should either:
 1. Inject an agent-card server sidecar that serves `/.well-known/agent.json` (content from the AgentCard CR or a ConfigMap), or

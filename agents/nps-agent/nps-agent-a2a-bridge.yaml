@@ -1,6 +1,6 @@
 # ConfigMap: A2A bridge for NPS Agent
 # Translates Google A2A JSON-RPC protocol to the NPS Agent's /invocations API
-# Based on manifests/openclaw/base/a2a-bridge-configmap.yaml but adapted for
+# Based on agents/openclaw/base/a2a-bridge-configmap.yaml but adapted for
 # MLflow ResponsesAgent format instead of OpenAI chat completions
 apiVersion: v1
 kind: ConfigMap

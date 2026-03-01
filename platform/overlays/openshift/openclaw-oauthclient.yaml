@@ -1,6 +1,6 @@
 # OAuthClient: openclaw (cluster-scoped)
 # NOTE: This requires cluster-admin permissions to create
-# Deploy with: oc apply -f manifests/openclaw/openclaw-oauthclient.yaml
+# Deploy with: oc apply -f agents/openclaw/openclaw-oauthclient.yaml
 # SECURITY: Generate a random secret before deploying
 #   openssl rand -base64 32
 apiVersion: oauth.openshift.io/v1

@@ -430,9 +430,10 @@ export TELEGRAM_ALLOW_FROM="${TELEGRAM_ALLOW_FROM:-}"
 # VERTEX_PROVIDER controls which Vertex provider: "anthropic" or "google" (default)
 export VERTEX_PROVIDER="${VERTEX_PROVIDER:-google}"
 if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-  export DEFAULT_AGENT_MODEL="anthropic/claude-sonnet-4-6"
+  export DEFAULT_AGENT_MODEL="anthropic/claude-sonnet-4-5"
 elif [ "${VERTEX_ENABLED:-}" = "true" ] && [ "${VERTEX_PROVIDER}" = "anthropic" ]; then
-  export DEFAULT_AGENT_MODEL="anthropic-vertex/claude-sonnet-4-6"
+  # TODO: upgrade to "anthropic-vertex/claude-sonnet-4-6" when SA has access to 4.6 models
+  export DEFAULT_AGENT_MODEL="anthropic-vertex/claude-sonnet-4-5@20250929"
   log_info "Using Anthropic Vertex (Claude via GCP) as default agent model"
 elif [ "${VERTEX_ENABLED:-}" = "true" ]; then
   export DEFAULT_AGENT_MODEL="google-vertex/gemini-2.5-pro"
@@ -486,10 +487,11 @@ else
   OPENCLAW_OVERLAY="$REPO_ROOT/agents/openclaw/overlays/openshift"
 fi
 
-# A2A sidecars are injected by the Kagenti webhook when kagenti.io/inject=enabled
-# (set in the base deployment). Port exclusions are controlled via pod annotations
-# (kagenti.io/outbound-ports-exclude, kagenti.io/inbound-ports-exclude).
-# When A2A is disabled, we patch the inject label to disabled and remove AgentCard + SCC.
+# A2A sidecars (proxy-init, spiffe-helper, client-registration, envoy-proxy) are defined
+# manually in the deployment manifest (not webhook-injected) so we control port exclusions.
+# kagenti.io/inject is set to "disabled" in the base deployment to prevent the webhook from
+# injecting duplicate sidecars. The AgentCard CR is still applied for Kagenti UI discovery.
+# When A2A is disabled, we also remove the AgentCard and SCC from kustomize output.
 if [ "$A2A_ENABLED" != "true" ]; then
   log_info "A2A disabled (use --with-a2a to enable). Setting kagenti.io/inject=disabled..."
   cat >> "$OPENCLAW_OVERLAY/kustomization.yaml" <<'DISABLE_AIB'
@@ -526,9 +528,9 @@ if [ "$A2A_ENABLED" != "true" ]; then
       metadata:
         name: openclaw-authbridge
 DISABLE_AIB
-  log_success "A2A disabled — webhook injection disabled, AgentCard and SCC removed"
+  log_success "A2A disabled — AIB sidecars, AgentCard, and SCC removed"
 else
-  log_info "A2A enabled — Kagenti webhook will inject AIB sidecars at admission time"
+  log_info "A2A enabled — manual AIB sidecars in deployment manifest"
 fi
 echo ""
 
@@ -536,8 +538,13 @@ echo ""
 log_info "Creating namespace..."
 $KUBECTL create namespace "$OPENCLAW_NAMESPACE" --dry-run=client -o yaml | $KUBECTL apply -f - > /dev/null
 # The kagenti-enabled label is set by setup-kagenti.sh (via agentNamespaces in helm values).
-# It triggers Kagenti to create AuthBridge ConfigMaps in the namespace and enables
-# webhook injection for pods with kagenti.io/inject=enabled.
+# It triggers Kagenti to create AuthBridge ConfigMaps in the namespace.
+# We remove it here to prevent the webhook from mutating our Deployment — we define
+# AIB sidecars manually to control proxy-init port exclusions.
+# The ConfigMaps persist after label removal.
+if [ "$A2A_ENABLED" = "true" ]; then
+  $KUBECTL label namespace "$OPENCLAW_NAMESPACE" kagenti-enabled- --overwrite > /dev/null 2>&1 || true
+fi
 $KUBECTL annotate namespace "$OPENCLAW_NAMESPACE" \
   "openclaw.dev/owner=$OPENCLAW_PREFIX" \
   "openclaw.dev/agent-name=$SHADOWMAN_DISPLAY_NAME" \
@@ -545,24 +552,6 @@ $KUBECTL annotate namespace "$OPENCLAW_NAMESPACE" \
   --overwrite > /dev/null
 log_success "Namespace created: $OPENCLAW_NAMESPACE (owner: $OPENCLAW_PREFIX, agent: $SHADOWMAN_DISPLAY_NAME)"
 echo ""
-
-# Patch environments ConfigMap with Keycloak keys for AIB client-registration sidecar.
-# The Kagenti helm chart creates the 'environments' ConfigMap but doesn't include the
-# individual KEYCLOAK_* keys that the client-registration container expects via configMapKeyRef.
-# TODO: Remove once kagenti upstream includes these keys (PR: kagenti/kagenti#charts-clustername-fix).
-if [ "$A2A_ENABLED" = "true" ]; then
-  log_info "Patching environments ConfigMap with Keycloak keys..."
-  # Read actual Keycloak admin credentials from the secret created by the RHBK operator.
-  # The RHBK operator creates a bootstrap admin user (e.g. "temp-admin") with a random password,
-  # NOT the default "admin/admin". The client-registration sidecar needs these to register clients.
-  KC_ADMIN_USER=$($KUBECTL get secret keycloak-initial-admin -n keycloak -o jsonpath='{.data.username}' 2>/dev/null | base64 -d) || KC_ADMIN_USER="admin"
-  KC_ADMIN_PASS=$($KUBECTL get secret keycloak-initial-admin -n keycloak -o jsonpath='{.data.password}' 2>/dev/null | base64 -d) || KC_ADMIN_PASS="admin"
-  $KUBECTL patch configmap environments -n "$OPENCLAW_NAMESPACE" --type merge -p \
-    "{\"data\":{\"KEYCLOAK_REALM\":\"demo\",\"KEYCLOAK_URL\":\"http://keycloak-service.keycloak.svc.cluster.local:8080\",\"KEYCLOAK_ADMIN_USERNAME\":\"${KC_ADMIN_USER}\",\"KEYCLOAK_ADMIN_PASSWORD\":\"${KC_ADMIN_PASS}\",\"KEYCLOAK_TOKEN_EXCHANGE_ENABLED\":\"true\",\"KEYCLOAK_CLIENT_REGISTRATION_ENABLED\":\"true\",\"SPIRE_ENABLED\":\"true\"}}" \
-    2>/dev/null && log_success "Keycloak keys added to environments ConfigMap (user: $KC_ADMIN_USER)" \
-    || log_warn "Could not patch environments ConfigMap — it may not exist yet. Re-run setup.sh after setup-kagenti.sh completes."
-  echo ""
-fi
 
 # Create Vertex AI credentials secret (if enabled)
 if [ "${VERTEX_ENABLED:-}" = "true" ] && [ -n "${VERTEX_SA_JSON_PATH:-}" ] && [ -f "${VERTEX_SA_JSON_PATH:-}" ]; then
@@ -628,12 +617,17 @@ log_info "  ✓ Read-only filesystem"
 log_info "  ✓ Health probes"
 log_info "  ✓ Device authentication"
 if [ "$A2A_ENABLED" = "true" ]; then
-  log_info "  ✓ Kagenti AIB (webhook-injected with port exclusion annotations)"
+  log_info "  ✓ Kagenti AIB (webhook-injected sidecars)"
 else
   log_info "  ○ Kagenti AIB disabled (use --with-a2a to enable)"
 fi
 $KUBECTL apply -k "$OPENCLAW_OVERLAY"
 log_success "OpenClaw deployed with enterprise security"
+
+# Fix proxy-init port exclusions for OpenShift with A2A.
+# The Kagenti webhook injects proxy-init with OUTBOUND_PORTS_EXCLUDE="8080" (Kind default)
+# and no INBOUND_PORTS_EXCLUDE. On OpenShift we need two fixes:
+
 
 echo ""
 

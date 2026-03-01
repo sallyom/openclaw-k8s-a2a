@@ -30,10 +30,13 @@ spec:
         prometheus.io/port: '18789'
         sidecar.opentelemetry.io/inject: "openclaw-sidecar"
         kagenti.io/description: "OpenClaw AI Agent Gateway"
+        kagenti.io/outbound-ports-exclude: "443,4317,4318,18789"
+        kagenti.io/inbound-ports-exclude: "8080,8443,18789,18790"
     spec:
       serviceAccountName: openclaw-oauth-proxy
       initContainers:
-      # Kagenti webhook injects proxy-init and AIB sidecars when kagenti.io/inject: enabled
+      # proxy-init is injected by the Kagenti webhook with port exclusions
+      # from kagenti.io/outbound-ports-exclude and kagenti.io/inbound-ports-exclude annotations.
       - name: init-config
         image: registry.redhat.io/ubi9-minimal:latest
         imagePullPolicy: IfNotPresent
@@ -290,11 +293,13 @@ spec:
           capabilities:
             drop:
             - ALL
-      # A2A sidecars (proxy-init, spiffe-helper, client-registration, envoy-proxy)
-      # are injected automatically by the kagenti-webhook when kagenti.io/inject: enabled
+      # AuthBridge sidecars (spiffe-helper, client-registration, envoy-proxy)
+      # are injected by the Kagenti webhook when kagenti.io/inject: enabled.
       volumes:
       - name: tmp-volume
         emptyDir: {}
+      # AuthBridge volumes (shared-data, svid-output, spire-agent-socket,
+      # spiffe-helper-config, envoy-config) are injected by the Kagenti webhook.
       - name: oauth-config
         secret:
           secretName: openclaw-oauth-config

@@ -100,7 +100,7 @@ Priority: Anthropic > Vertex > in-cluster. The `MODEL_ENDPOINT` variable configu
 
 **Google Vertex AI** requires a GCP service account JSON key with Vertex AI permissions. The setup script creates a `vertex-credentials` K8s secret and sets `GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_CLOUD_PROJECT`, and `GOOGLE_CLOUD_LOCATION` on the pod.
 
-To deploy the vLLM model server, see [`manifests/openclaw/llm/`](./llm/).
+To deploy the vLLM model server, see [`agents/openclaw/llm/`](./llm/).
 
 ## Architecture
 
@@ -115,7 +115,7 @@ Kubernetes:
 ## Directory Structure
 
 ```
-manifests/openclaw/
+agents/openclaw/
 ├── README.md                                 # This file
 ├── SECURITY.md                               # Security guide
 ├── base/                                     # Shared base resources

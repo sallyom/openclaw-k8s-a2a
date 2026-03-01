@@ -71,7 +71,7 @@ source "$REPO_ROOT/.env"
 set +a
 
 # Source .env.a2a for cluster-level A2A config (Keycloak, SPIRE settings)
-# Written by manifests/a2a-infra/setup-a2a-infra.sh — survives .env wipes
+# Now managed by Kagenti operator — .env.a2a survives .env wipes
 if [ -f "$REPO_ROOT/.env.a2a" ]; then
   set -a
   # shellcheck disable=SC1091
@@ -149,10 +149,9 @@ export GOOGLE_CLOUD_LOCATION="${GOOGLE_CLOUD_LOCATION:-}"
 # VERTEX_PROVIDER controls which Vertex provider: "anthropic" or "google" (default)
 export VERTEX_PROVIDER="${VERTEX_PROVIDER:-google}"
 if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-  export DEFAULT_AGENT_MODEL="anthropic/claude-sonnet-4-5"
+  export DEFAULT_AGENT_MODEL="anthropic/claude-sonnet-4-6"
 elif [ "${VERTEX_ENABLED:-}" = "true" ] && [ "${VERTEX_PROVIDER}" = "anthropic" ]; then
-  # TODO: upgrade to "anthropic-vertex/claude-sonnet-4-6" when SA has access to 4.6 models
-  export DEFAULT_AGENT_MODEL="anthropic-vertex/claude-sonnet-4-5@20250929"
+  export DEFAULT_AGENT_MODEL="anthropic-vertex/claude-sonnet-4-6"
   log_info "Using Anthropic Vertex (Claude via GCP) as default agent model"
 elif [ "${VERTEX_ENABLED:-}" = "true" ]; then
   export DEFAULT_AGENT_MODEL="google-vertex/gemini-2.5-pro"
@@ -225,20 +224,12 @@ $KUBECTL apply -f "$REPO_ROOT/agents/openclaw/agents/mlops-monitor/mlops-monitor
 $KUBECTL create configmap mlops-report-latest \
   --from-literal=report.txt="No report generated yet. The mlops-report CronJob has not run." \
   -n "$OPENCLAW_NAMESPACE" --dry-run=client -o yaml | $KUBECTL apply -f -
-# Create mlops-monitor secrets (MLFLOW_TRACKING_URI)
+# Create mlops-monitor secrets (MLFLOW_TRACKING_URI — set by setup.sh)
 MLFLOW_URI="${MLFLOW_TRACKING_URI:-}"
 if [ -z "$MLFLOW_URI" ]; then
-  log_info "MLflow tracking URI (for mlops-monitor to query NPS Agent traces):"
-  read -p "  Enter URI (or press Enter to skip): " MLFLOW_URI
-  # Save to .env so we don't ask again on re-runs
-  if [ -n "$MLFLOW_URI" ] && [ -f "$REPO_ROOT/.env" ]; then
-    if grep -q '^MLFLOW_TRACKING_URI=' "$REPO_ROOT/.env"; then
-      sed -i'' -e "s|^MLFLOW_TRACKING_URI=.*|MLFLOW_TRACKING_URI=$MLFLOW_URI|" "$REPO_ROOT/.env"
-    else
-      echo "MLFLOW_TRACKING_URI=$MLFLOW_URI" >> "$REPO_ROOT/.env"
-    fi
-    log_success "Saved to .env"
-  fi
+  log_info "MLflow tracking URI not set in .env — prompting..."
+  log_info "  (Set this in setup.sh to avoid this prompt)"
+  read -p "  Enter MLflow URI (or press Enter to skip): " MLFLOW_URI
 fi
 if [ -n "$MLFLOW_URI" ]; then
   $KUBECTL create secret generic mlops-monitor-secrets \

@@ -146,27 +146,31 @@ The init container overwrites config on every pod restart. Export before restart
 
 ```
 openclaw-infra/
+├── platform/                   # Generic trusted A2A network platform
+│   ├── base/                   # Namespace scaffolding, RBAC, quotas, PVCs, PDB
+│   ├── auth-identity-bridge/   # AgentCard CR + SCC (Kagenti webhook handles sidecars)
+│   ├── observability/          # OTEL sidecar configs, tracing (Jaeger, collector)
+│   ├── overlays/
+│   │   ├── openshift/          # OAuth proxy, Route, SCC RBAC, OAuthClient
+│   │   └── k8s/                # fsGroup patches, service patches
+│   └── edge/                   # Generic Quadlet scaffolding: OTEL collector
+│
+├── agents/
+│   ├── openclaw/               # OpenClaw reference implementation
+│   │   ├── base/               # Deployment, Service, ConfigMap, Secrets, Route
+│   │   ├── overlays/
+│   │   │   ├── openshift/      # Config, secrets, deployment patches (oauth-proxy)
+│   │   │   └── k8s/            # Config, secrets, deployment patches (fsGroup)
+│   │   ├── agents/             # Agent configs, RBAC, cron jobs
+│   │   ├── skills/             # Agent skills (A2A, NPS)
+│   │   ├── edge/               # OpenClaw Quadlet files, config templates, setup-edge.sh
+│   │   └── llm/                # vLLM reference deployment (GPU model server)
+│   ├── nps-agent/              # NPS Agent (own namespace + identity)
+│   └── _template/              # Skeleton for new agent implementations
+│
 ├── scripts/                    # K8s/OpenShift deployment scripts
-├── manifests/
-│   └── openclaw/
-│       ├── base/               # Core: deployment, service, PVCs, A2A resources
-│       ├── base-k8s/           # K8s-specific patches
-│       ├── patches/            # Optional patches (strip-a2a.yaml)
-│       ├── overlays/
-│       │   ├── openshift/      # OpenShift overlay (secrets, config, OAuth, routes)
-│       │   └── k8s/            # Vanilla Kubernetes overlay
-│       ├── agents/             # Agent configs, RBAC, cron jobs
-│       ├── skills/             # Agent skills (NPS, A2A)
-│       └── llm/                # vLLM reference deployment (GPU model server)
-│   └── nps-agent/              # NPS Agent (own namespace + identity)
-├── edge/                       # Standalone Linux deployment
-│   ├── quadlet/                # Podman Quadlet files (systemd)
-│   ├── config/                 # Agent + OTEL collector config templates
-│   └── scripts/                # setup-edge.sh
-├── observability/              # OTEL sidecar and collector templates
 └── docs/
     ├── FLEET.md                # Fleet management architecture
-    ├── ARCHITECTURE.md         # Overall architecture
     ├── ADDITIONAL-AGENTS.md    # Agent details, RBAC, cron jobs
     ├── A2A-ARCHITECTURE.md     # A2A + AuthBridge deep dive
     ├── A2A-SECURITY.md         # Identity, audit, DLP roadmap

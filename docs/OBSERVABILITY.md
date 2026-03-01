@@ -318,7 +318,7 @@ Once the `OpenTelemetryCollector` resources are deployed, enable sidecar injecti
 
 #### OpenClaw Deployment
 
-Edit `manifests/openclaw/base/openclaw-deployment.yaml`:
+Edit `agents/openclaw/base/openclaw-deployment.yaml`:
 
 ```yaml
 apiVersion: apps/v1
@@ -340,7 +340,7 @@ spec:
 
 Then apply the change:
 ```bash
-oc apply -k manifests/openclaw/overlays/openshift/
+oc apply -k agents/openclaw/overlays/openshift/
 oc rollout restart deployment/openclaw -n openclaw
 ```
 

@@ -11,7 +11,7 @@
 # Prerequisites:
 #   - kagenti-webhook deployed on the cluster
 #   - SPIRE server + agent running (spire-system namespace)
-#   - Keycloak with realm configured (see manifests/a2a-infra/)
+#   - Keycloak with realm configured (managed by Kagenti operator)
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: openclaw
