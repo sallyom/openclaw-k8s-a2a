@@ -108,6 +108,7 @@ openclaw-infra/
 ├── agents/
 │   ├── openclaw/                       # OpenClaw reference implementation
 │   │   ├── base/                       # Deployment, Service, ConfigMap, Secrets, Route
+│   │   ├── a2a-bridge/                 # A2A JSON-RPC to OpenAI bridge (ConfigMap-mounted script)
 │   │   ├── overlays/
 │   │   │   ├── openshift/              # Config, secrets, deployment patches (oauth-proxy)
 │   │   │   └── k8s/                    # Config, secrets, deployment patches (fsGroup)
@@ -212,7 +213,7 @@ When A2A is enabled:
 
 When A2A is disabled (default):
 - `kagenti.io/inject` label is patched to `disabled`, webhook skips injection
-- Default deployment has 2 containers: gateway + init-config (OpenShift adds oauth-proxy)
+- Default deployment has 3 containers: gateway + agent-card (A2A bridge) + init-config (OpenShift adds oauth-proxy)
 
 ## Observability
 
@@ -243,8 +244,8 @@ All platforms emit OTLP traces to MLflow:
 | `VERTEX_PROVIDER` | User prompt (default: `google`) | `google` for Gemini, `anthropic` for Claude via Vertex |
 | `GOOGLE_CLOUD_PROJECT` | User prompt (if Vertex) | GCP project ID |
 | `A2A_ENABLED` | `--with-a2a` flag (default: `false`) | A2A communication |
-| `SHADOWMAN_CUSTOM_NAME` | User prompt in setup-agents.sh | Default agent ID |
-| `SHADOWMAN_DISPLAY_NAME` | User prompt in setup-agents.sh | Default agent display name |
+| `SHADOWMAN_CUSTOM_NAME` | User prompt in setup.sh (or setup-agents.sh) | Default agent ID |
+| `SHADOWMAN_DISPLAY_NAME` | User prompt in setup.sh (or setup-agents.sh) | Default agent display name |
 | `DEFAULT_AGENT_MODEL` | Derived from API key availability | Model ID for agents |
 
 ## Critical Files
@@ -254,7 +255,8 @@ All platforms emit OTLP traces to MLflow:
 | `agents/openclaw/overlays/openshift/config-patch.yaml.envsubst` | Main gateway config (models, agents, tools) |
 | `agents/openclaw/overlays/k8s/config-patch.yaml.envsubst` | K8s gateway config |
 | `agents/openclaw/agents/agents-config-patch.yaml.envsubst` | Agent list overlay |
-| `agents/openclaw/base/openclaw-deployment.yaml` | Gateway deployment with init container |
+| `agents/openclaw/base/openclaw-deployment.yaml` | Gateway deployment with A2A bridge + init container |
+| `agents/openclaw/a2a-bridge/a2a-bridge.py` | A2A JSON-RPC to OpenAI bridge (serves agent card + translates messages) |
 | `agents/openclaw/overlays/k8s/deployment-k8s-patch.yaml` | K8s deployment patch |
 | `platform/base/kustomization.yaml` | Platform base (namespace, PVCs, quotas, RBAC) |
 | `platform/auth-identity-bridge/kustomization.yaml` | AgentCard CR + SCC (Kagenti AIB) |

@@ -164,7 +164,13 @@ This means:
 | `jsonrpc error -32602` | Invalid message format | Check your JSON structure matches the examples above |
 | `jsonrpc error -32603` | Remote agent error | The remote agent failed to process — try rephrasing |
 
-## 7. Best Practices
+## 7. Session Persistence
+
+A2A conversations maintain history per remote agent. When a remote agent sends you multiple messages, they all go to the same session, so you can reference prior exchanges. The remote agent's SPIFFE identity (or explicit user header) is used to pin the session automatically.
+
+This means you can have multi-turn conversations with remote agents. They will remember what you discussed earlier in the same session.
+
+## 8. Best Practices
 
 - **Discover first**: Always fetch the agent card before sending messages to confirm the instance is up and see available agents
 - **Be concise**: Remote agents may use small models — keep messages clear and specific
