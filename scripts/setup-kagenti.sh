@@ -15,7 +15,8 @@
 # Prerequisites:
 #   - oc / kubectl with cluster-admin
 #   - helm >= 3.18.0 (Helm 4 also works)
-#   - Local clone of kagenti repo
+#   - Local clone of kagenti repo (use sallyom/kagenti branch charts-updated-webhook
+#     until port exclusion annotations are merged upstream)
 #
 # Tested on: OCP 4.19+ (ROSA)
 # ============================================================================
@@ -278,31 +279,6 @@ log_success "Kagenti installed"
 echo ""
 
 # ============================================================================
-# Step 5b: Override webhook image for port exclusion annotation support
-# ============================================================================
-# The upstream webhook hardcodes OUTBOUND_PORTS_EXCLUDE="8080" with no inbound exclusions.
-# Our fork (github.com:sallyom/kagenti-extensions branch update-for-ports) adds support for
-# kagenti.io/outbound-ports-exclude and kagenti.io/inbound-ports-exclude pod annotations.
-# Until this is merged upstream, override the webhook image:
-log_info "Step 5b: Override webhook image for port exclusion annotations"
-WEBHOOK_IMAGE="quay.io/sallyom/kagenti-webhook:latest"
-# The Kagenti agent-oauth-secret-job writes KEYCLOAK_ADMIN_* fields to the environments
-# ConfigMaps using the "OpenAPI-Generator" field manager, which conflicts with Helm's
-# server-side apply on subsequent upgrades. Delete the ConfigMaps to let Helm recreate them.
-IFS=',' read -ra NS_ARRAY <<< "${AGENT_NAMESPACES}"
-for ns in "${NS_ARRAY[@]}"; do
-  $KUBECTL delete configmap environments -n "$ns" 2>/dev/null || true
-done
-run_cmd helm upgrade kagenti "$KAGENTI_REPO/charts/kagenti/" \
-  --reuse-values \
-  --set kagenti-webhook-chart.image.repository=quay.io/sallyom/kagenti-webhook \
-  --set kagenti-webhook-chart.image.tag=latest \
-  -n kagenti-system
-log_success "Webhook image overridden: $WEBHOOK_IMAGE"
-log_info "  Source: github.com:sallyom/kagenti-extensions (branch: update-for-ports)"
-echo ""
-
-# ============================================================================
 # Step 6: Verify
 # ============================================================================
 log_info "Step 6: Verify installation"
@@ -326,10 +302,10 @@ if [ -n "$UI_HOST" ]; then
   log_success "Kagenti UI: https://$UI_HOST"
 fi
 
-# Keycloak credentials
+# Keycloak admin credentials (master realm — for admin console only)
 KC_SECRET=$($KUBECTL get secret keycloak-initial-admin -n keycloak -o go-template='Username: {{.data.username | base64decode}}  Password: {{.data.password | base64decode}}' 2>/dev/null || echo "")
 if [ -n "$KC_SECRET" ]; then
-  log_success "Keycloak credentials: $KC_SECRET"
+  log_success "Keycloak admin (master realm): $KC_SECRET"
 fi
 
 echo ""
